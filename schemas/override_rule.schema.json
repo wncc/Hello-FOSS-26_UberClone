@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OverrideRule",
+  "type": "object",
+  "required": ["rule_id", "target", "condition", "op", "value", "source"],
+  "properties": {
+    "rule_id": { "type": "string" },
+    "target": { "enum": ["speed", "priority"] },
+    "condition": {
+      "oneOf": [
+        { "type": "object", "required": ["always"], "properties": { "always": { "const": true } } },
+        { "type": "object", "required": ["road_class"], "properties": { "road_class": { "type": "string" } }, "not": { "required": ["segment_id"] } },
+        {
+          "type": "object",
+          "required": ["segment_id"],
+          "properties": { "segment_id": { "type": "string" }, "road_class": { "type": "string" } }
+        }
+      ]
+    },
+    "op": { "enum": ["multiply_by", "limit_to"] },
+    "value": { "type": "number", "minimum": 0 },
+    "source": { "enum": ["baseline", "telemetry.speed", "telemetry.deviation", "ops"] },
+    "reason": { "type": "string" },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "target": { "const": "priority" } } },
+      "then": { "properties": { "value": { "maximum": 1 } } }
+    },
+    {
+      "if": { "properties": { "target": { "const": "priority" }, "source": { "enum": ["telemetry.speed", "telemetry.deviation"] } } },
+      "then": { "properties": { "value": { "minimum": 0.01 } } }
+    },
+    {
+      "if": { "properties": { "target": { "const": "speed" }, "op": { "const": "multiply_by" } } },
+      "then": { "properties": { "value": { "exclusiveMinimum": 0, "maximum": 1 } } }
+    },
+    {
+      "if": { "properties": { "target": { "const": "speed" }, "op": { "const": "limit_to" } } },
+      "then": { "properties": { "value": { "minimum": 5 } } }
+    }
+  ]
+}

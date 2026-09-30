@@ -1,0 +1,32 @@
+[
+  {
+    "rule_id": "tele.speed.234567890:1001:1002",
+    "target": "speed",
+    "condition": { "segment_id": "234567890:1001:1002", "road_class": "PRIMARY" },
+    "op": "limit_to",
+    "value": 21.4,
+    "source": "telemetry.speed",
+    "reason": "soft: speed_ratio=0.54",
+    "expires_at": "2026-10-02T08:45:00Z"
+  },
+  {
+    "rule_id": "tele.dev.98765:2001:2002",
+    "target": "priority",
+    "condition": { "segment_id": "98765:2001:2002", "road_class": "RESIDENTIAL" },
+    "op": "multiply_by",
+    "value": 0.01,
+    "source": "telemetry.deviation",
+    "reason": "hard: avoidance_rate=0.86",
+    "expires_at": "2026-10-02T08:45:00Z"
+  },
+  {
+    "rule_id": "ops.closure.flyover-7",
+    "target": "priority",
+    "condition": { "segment_id": "445566:3001:3002" },
+    "op": "multiply_by",
+    "value": 0,
+    "source": "ops",
+    "reason": "municipal closure",
+    "expires_at": "2026-09-30T00:00:00Z"
+  }
+]

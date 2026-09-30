@@ -1,0 +1,20 @@
+{
+  "speed_samples": [
+    {
+      "segment_id": "234567890:1001:1002",
+      "driver_id": "drv_812",
+      "trip_id": "trip_99812",
+      "speed_kmh": 14.2,
+      "observed_at": "2026-09-24T08:41:10Z"
+    }
+  ],
+  "segment_exposures": [
+    {
+      "segment_id": "98765:2001:2002",
+      "driver_id": "drv_812",
+      "trip_id": "trip_99812",
+      "followed": false,
+      "observed_at": "2026-09-24T08:43:55Z"
+    }
+  ]
+}

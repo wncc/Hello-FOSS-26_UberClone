@@ -1,0 +1,24 @@
+# Minimal GraphHopper server config for the hierarchy profile.
+# Keep baseline values in sync with routing/road_classes.py (a test can diff them).
+graphhopper:
+  datareader.file: /data/region-latest.osm.pbf
+  graph.location: /data/graph-cache
+  graph.encoded_values: car_access, car_average_speed, road_class, road_class_link, max_speed
+
+  profiles:
+    - name: car
+      custom_model_files: [car_hierarchy.json]
+
+  # No CH: per-request custom models (telemetry overlays) need the flexible path.
+  # LM keeps it fast and stays valid because overlays only ever lower speed/priority.
+  profiles_ch: []
+  profiles_lm:
+    - profile: car
+
+  import.osm.ignored_highways: footway,cycleway,path,pedestrian,steps
+
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 0.0.0.0

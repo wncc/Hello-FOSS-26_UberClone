@@ -16,7 +16,7 @@ from .models import (
     EDGE_AVERAGE_SPEED, Always, CustomModel, EdgeEvaluation, EdgeMeta, Op,
     RoadClassIs, SegmentIs, Source, Statement, Target,
 )
-from .road_classes import BASE_PRIORITY, RoadClass
+from .road_classes import BASE_PRIORITY, UNIFORM_SPEED_KMH, RoadClass
 
 MIN_TELEMETRY_PRIORITY = 0.01   # "effectively dead" but still routable as last resort
 MIN_SPEED_KMH = 5.0
@@ -31,7 +31,7 @@ class RuleValidationError(ValueError):
 # --------------------------------------------------------------------------- #
 
 def baseline_model(distance_influence: float = 0.0) -> CustomModel:
-    speed = [Statement(Target.SPEED, Always(), Op.LIMIT_TO, EDGE_AVERAGE_SPEED,
+    speed = [Statement(Target.SPEED, Always(), Op.LIMIT_TO, UNIFORM_SPEED_KMH,
                        Source.BASELINE, "base.speed")]
     priority = [
         Statement(Target.PRIORITY, RoadClassIs(rc), Op.MULTIPLY_BY, p,
@@ -75,8 +75,11 @@ _SOURCE_ORDER = {s: i for i, s in enumerate(Source)}
 
 
 def merge_models(base: CustomModel, overlays: list[list[Statement]],
-                 now: datetime | None = None) -> CustomModel:
+                 now: datetime | None = None, bucket: int | None = None) -> CustomModel:
     """Append validated, non-expired overlay statements to the baseline.
+
+    `bucket` is the request's time-of-week bucket. Time-scoped rules are only
+    included when it matches; without a bucket they are left out.
 
     Baseline statements are kept verbatim and first. Overlay duplicates from the
     same source that target the same (target, condition, op) keep only the
@@ -85,7 +88,7 @@ def merge_models(base: CustomModel, overlays: list[list[Statement]],
     now = now or datetime.now(timezone.utc)
     strictest: dict[tuple, Statement] = {}
     for stmt in (s for layer in overlays for s in layer):
-        if not stmt.is_active(now):
+        if not stmt.is_active(now, bucket):
             continue
         validate(stmt)
         key = (stmt.target, stmt.condition, stmt.op, stmt.source)

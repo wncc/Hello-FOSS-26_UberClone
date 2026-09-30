@@ -12,25 +12,26 @@ from routing.rule_engine import CompiledModel, RuleValidationError, validate
 
 NOW = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
 
-#   A ── primary (40 km/h, longer) ── B ── primary ── C
-#   A ── residential (30 km/h, shorter) ── R ── residential ── C
+# Every road has the same speed; only priority prefers the main road.
+#   A ── primary (longer) ── B ── primary ── C
+#   A ── residential (shorter) ── R ── residential ── C
 NODES = {
     "A": (12.9700, 77.5900),
-    "B": (12.9745, 77.5950),
+    "B": (12.9725, 77.5950),
     "C": (12.9700, 77.6000),
     "R": (12.9700, 77.5950),
 }
 
 
-def _edge(seg, a, b, rc, speed):
-    return EdgeMeta(seg, a, b, rc, haversine_m(NODES[a], NODES[b]), speed, geometry=(NODES[a], NODES[b]))
+def _edge(seg, a, b, rc):
+    return EdgeMeta(seg, a, b, rc, haversine_m(NODES[a], NODES[b]), geometry=(NODES[a], NODES[b]))
 
 
 EDGES = [
-    _edge("AB", "A", "B", RoadClass.PRIMARY, 40),
-    _edge("BC", "B", "C", RoadClass.PRIMARY, 40),
-    _edge("AR", "A", "R", RoadClass.RESIDENTIAL, 30),
-    _edge("RC", "R", "C", RoadClass.RESIDENTIAL, 30),
+    _edge("AB", "A", "B", RoadClass.PRIMARY),
+    _edge("BC", "B", "C", RoadClass.PRIMARY),
+    _edge("AR", "A", "R", RoadClass.RESIDENTIAL),
+    _edge("RC", "R", "C", RoadClass.RESIDENTIAL),
 ]
 EDGE_MAP = {e.segment_id: e for e in EDGES}
 
@@ -65,9 +66,9 @@ class BaselineTests(unittest.TestCase):
 class TelemetryTests(unittest.TestCase):
     def test_soft_slowdown_keeps_hierarchy(self):
         svc = service()
-        rules = svc.refresh_telemetry(speed_samples("AB", 15, drivers=10, per_driver=3, days=2), [], NOW)
+        rules = svc.refresh_telemetry(speed_samples("AB", 10, drivers=10, per_driver=3, days=2), [], NOW)
         self.assertEqual([r.rule_id for r in rules], ["tele.speed.AB"])
-        self.assertGreaterEqual(rules[0].value, 20)  # soft cap: at most half of 40 km/h
+        self.assertGreaterEqual(rules[0].value, 15)  # soft cap: at most half of 30 km/h
         self.assertEqual(svc.route(NODES["A"], NODES["C"], NOW).segments, ["AB", "BC"])
 
     def test_soft_deviation_is_bounded(self):
@@ -88,9 +89,9 @@ class TelemetryTests(unittest.TestCase):
 
     def test_hysteresis(self):
         svc = service()
-        svc.refresh_telemetry(speed_samples("AB", 15, drivers=10, per_driver=3, days=2), [], NOW)
+        svc.refresh_telemetry(speed_samples("AB", 10, drivers=10, per_driver=3, days=2), [], NOW)
         # Moderate recovery: above the enter threshold (0.70) but below exit (0.80) -> rule stays.
-        recovering = speed_samples("AB", 27, drivers=10, per_driver=8, days=3)
+        recovering = speed_samples("AB", 20, drivers=10, per_driver=8, days=3)
         self.assertEqual(len(svc.refresh_telemetry(recovering, [], NOW)), 1)
         self.assertEqual(len(service().refresh_telemetry(recovering, [], NOW)), 0)
 
@@ -151,7 +152,7 @@ class IntegrationFormatTests(unittest.TestCase):
             Statement(Target.PRIORITY, SegmentIs("8442"), Op.MULTIPLY_BY, 0.01, Source.TELEMETRY_DEVIATION, "p"),
         ]
         gh = to_graphhopper(merge_models(baseline_model(), [overlays], NOW), {}, segment_mode="expression")
-        self.assertEqual(gh["speed"], [{"if": "true", "limit_to": "car_average_speed"},
+        self.assertEqual(gh["speed"], [{"if": "true", "limit_to": 30.0},
                                        {"if": "segment_id == 15933", "limit_to": 15.0}])
         self.assertIn({"if": "road_class == RESIDENTIAL", "multiply_by": 0.5}, gh["priority"])
         self.assertEqual(gh["priority"][-1], {"if": "segment_id == 8442", "multiply_by": 0.01})

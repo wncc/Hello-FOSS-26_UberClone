@@ -2,7 +2,7 @@
   "speed": [
     {
       "if": "true",
-      "limit_to": "car_average_speed"
+      "limit_to": 30.0
     },
     {
       "if": "segment_id == 15933",

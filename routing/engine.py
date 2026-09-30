@@ -4,17 +4,20 @@ from __future__ import annotations
 import heapq
 import itertools
 import math
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Protocol
 
-from .cost import edge_cost, edge_time_s
+from .cost import edge_cost, edge_time_s, route_eta_s
 from .graph import RoadGraph, haversine_m
 from .models import (
     CustomModel, EdgeEvaluation, EdgeMeta, RoadHealth, RouteResult, SegmentExposure,
-    SpeedSample, Statement,
+    SpeedSample, Statement, Target,
 )
 from .rule_engine import CompiledModel, baseline_model, merge_models
+from .speed_model import DEFAULT_SPEED_POLICY, FittedSpeedModel, SpeedModelPolicy, fit_speed_model
 from .telemetry import DEFAULT_POLICY, TelemetryPolicy, aggregate, derive_rules
+from .time_buckets import TimeBuckets
 
 LatLon = tuple[float, float]
 
@@ -96,25 +99,38 @@ class RoutingService:
 
     Holds the baseline model, the current telemetry rules and ops rules, and
     delegates path finding to a backend (local A* or GraphHopper).
+
+    With `buckets` set, it also learns time-of-week traffic: the fitted speed
+    model supplies per-departure traffic rules and a time-aware ETA.
     """
 
     def __init__(self, backend: RouterBackend, edges: dict[str, EdgeMeta],
-                 base: CustomModel | None = None, policy: TelemetryPolicy = DEFAULT_POLICY):
+                 base: CustomModel | None = None, policy: TelemetryPolicy = DEFAULT_POLICY,
+                 buckets: TimeBuckets | None = None,
+                 speed_policy: SpeedModelPolicy = DEFAULT_SPEED_POLICY):
         self.backend = backend
         self.edges = edges
         self.base = base or baseline_model()
+        _check_expected_speeds(self.base, edges)
         self.policy = policy
+        self.buckets = buckets
+        self.speed_policy = speed_policy
         self.telemetry_rules: list[Statement] = []
         self.ops_rules: list[Statement] = []
         self.health: dict[str, RoadHealth] = {}
+        self.speed_model: FittedSpeedModel | None = None
 
     def refresh_telemetry(self, speed_samples: list[SpeedSample], exposures: list[SegmentExposure],
                           now: datetime | None = None) -> list[Statement]:
-        """Recompute telemetry rules (run on a schedule, e.g. every 15 min)."""
+        """Refit the speed model and recompute telemetry rules (run on a schedule, e.g. every 15 min)."""
         now = now or datetime.now(timezone.utc)
-        previously_active = {r.rule_id for r in self.telemetry_rules if r.is_active(now)}
-        stats = aggregate(speed_samples, exposures, now, self.policy)
-        rules, health = derive_rules(self.edges, stats, now, previously_active, self.policy)
+        if self.buckets:
+            self.speed_model = fit_speed_model(self.edges, speed_samples, now, self.buckets,
+                                               policy=self.speed_policy)
+        previously_active = {r.rule_id for r in self.telemetry_rules
+                             if r.expires_at is None or now < r.expires_at}
+        stats = aggregate(speed_samples, exposures, now, self.policy, self.speed_model)
+        rules, health = derive_rules(self.edges, stats, now, previously_active, self.policy, self.speed_model)
         self.telemetry_rules = rules
         self.health = {h.segment_id: h for h in health}
         return rules
@@ -122,8 +138,33 @@ class RoutingService:
     def set_ops_rules(self, rules: list[Statement]) -> None:
         self.ops_rules = list(rules)
 
-    def model_for_request(self, now: datetime | None = None) -> CustomModel:
-        return merge_models(self.base, [self.telemetry_rules, self.ops_rules], now)
+    def model_for_request(self, now: datetime | None = None, depart_at: datetime | None = None) -> CustomModel:
+        now = now or datetime.now(timezone.utc)
+        bucket = self.buckets.of(depart_at or now) if self.buckets else None
+        traffic = self.speed_model.traffic_statements(bucket) if self.speed_model and bucket is not None else []
+        return merge_models(self.base, [self.telemetry_rules, self.ops_rules, traffic], now, bucket)
 
-    def route(self, start: LatLon, end: LatLon, now: datetime | None = None) -> RouteResult | None:
-        return self.backend.route(start, end, self.model_for_request(now))
+    def eta_s(self, path: list[EdgeMeta], depart_at: datetime, fallback_s: float) -> float:
+        return route_eta_s(path, depart_at, self.speed_model.speed_kmh) if self.speed_model and path else fallback_s
+
+    def route(self, start: LatLon, end: LatLon, now: datetime | None = None,
+              depart_at: datetime | None = None) -> RouteResult | None:
+        now = now or datetime.now(timezone.utc)
+        depart_at = depart_at or now
+        result = self.backend.route(start, end, self.model_for_request(now, depart_at))
+        if result is None:
+            return None
+        path = [self.edges[s] for s in result.segments if s in self.edges]
+        return replace(result, eta_s=self.eta_s(path, depart_at, result.eta_s))
+
+
+def _check_expected_speeds(base: CustomModel, edges: dict[str, EdgeMeta]) -> None:
+    """Telemetry measures slowness against edge.speed_kmh; it must match what the baseline routes with."""
+    limits = [s.value for s in base.speed if s.target is Target.SPEED and isinstance(s.value, (int, float))]
+    if not limits:
+        return
+    expected = min(limits)
+    mismatched = [e.segment_id for e in edges.values() if e.speed_kmh != expected]
+    if mismatched:
+        raise ValueError(f"baseline assumes {expected} km/h on every road, but {len(mismatched)} edges "
+                         f"differ (e.g. {mismatched[0]}); build EdgeMeta without speed_kmh")

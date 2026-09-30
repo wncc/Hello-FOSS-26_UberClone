@@ -1,5 +1,7 @@
 # Routing: road hierarchy + telemetry overlays
 
+> For learning slower roads (traffic vs. road condition) and avoided roads, see [ROAD_LEARNING.md](ROAD_LEARNING.md). ETA approximation is tracked in [issue 001](issues/001-eta-approximation.md).
+
 ## 1. Overview
 
 Every road segment's cost is
@@ -18,19 +20,21 @@ Scope: this package is only the routing function. Trip management, the GPS pipel
 
 ## 2. Baseline custom model
 
-| road_class | priority | fallback speed (km/h) |
-|---|---|---|
-| MOTORWAY / TRUNK / PRIMARY | 1.0 | 100 / 80 / 60 |
-| SECONDARY | 0.9 | 50 |
-| TERTIARY | 0.8 | 40 |
-| UNCLASSIFIED | 0.6 | 30 |
-| RESIDENTIAL | 0.5 | 30 |
-| LIVING_STREET / SERVICE | 0.2 | 10 / 15 |
-| TRACK | 0.1 | 10 |
+| road_class | priority |
+|---|---|
+| MOTORWAY / TRUNK / PRIMARY | 1.0 |
+| SECONDARY | 0.9 |
+| TERTIARY | 0.8 |
+| UNCLASSIFIED | 0.6 |
+| RESIDENTIAL | 0.5 |
+| LIVING_STREET / SERVICE | 0.2 |
+| TRACK | 0.1 |
+
+**Speed: every road is assumed to be driven at the same speed, `UNIFORM_SPEED_KMH` = 30 km/h,** until telemetry shows a road is slower (see [ROAD_LEARNING.md](ROAD_LEARNING.md)). This keeps the two ideas separate: *preference* comes only from priority, and *slowness* comes only from measured data. Per-class speeds, map speeds and a starting congestion estimate are postponed; see [issue 001](issues/001-eta-approximation.md). `RoutingService` refuses edges whose `speed_kmh` differs from the baseline speed, because telemetry measures slowness against that value.
 
 Source of truth: [routing/road_classes.py](../routing/road_classes.py). The server copy is [deploy/graphhopper/car_hierarchy.json](../deploy/graphhopper/car_hierarchy.json), and a test fails if the two drift apart.
 
-At these values one residential km costs about **4×** one primary km (30 km/h × 0.5 vs 60 km/h × 1.0). Drivers still use residential streets for the first and last few hundred metres, but not as shortcuts.
+With equal speeds, one residential km costs **2×** one primary km (priority 0.5 vs 1.0). So the main road wins unless it is more than twice as long as the residential shortcut.
 
 ## 3. Architecture
 
@@ -112,7 +116,7 @@ Key functions:
 function ROUTE(start, destination, graph, telemetry_rules, ops_rules, now):
     model   ← MERGE(BASELINE, telemetry_rules ∪ ops_rules, now)   # drop expired, validate, dedupe
     src,dst ← SNAP(start), SNAP(destination)
-    vmax    ← max map speed in graph                               # overlays never exceed it
+    vmax    ← max expected speed in graph                          # overlays never exceed it
     h(n)    ← haversine(n, dst) / vmax                             # admissible because priority ≤ 1
 
     open ← {src: h(src)};  g[src] ← 0
@@ -120,7 +124,7 @@ function ROUTE(start, destination, graph, telemetry_rules, ops_rules, now):
         u ← pop lowest g[u] + h(u)
         if u = dst: return PATH(parent, dst), g[dst]
         for edge e = (u → v):
-            speed    ← e.map_speed
+            speed    ← e.expected_speed                   # uniform for now
             for s in model.speed where s.matches(e):    speed ← s.limit_to ? min(speed, s.v) : speed × s.v
             priority ← 1
             for s in model.priority where s.matches(e): priority ← s.limit_to ? min(priority, s.v) : priority × s.v
@@ -135,8 +139,8 @@ function ROUTE(start, destination, graph, telemetry_rules, ops_rules, now):
 ## 6. Future telemetry integration
 
 ### Speed-based (potholes, chronic congestion)
-Median speed per segment → shrunk toward map speed: `(w·median + 20·expected)/(w + 20)` → if ratio < 0.70 emit `limit_to`.
-With **soft** evidence the speed is capped at no less than half the map speed. **Hard** evidence (≥150 weighted samples, ≥20 drivers, ≥3 days) is applied as measured, with a 5 km/h minimum.
+Median speed per segment (with time-of-week traffic removed first) → shrunk toward the expected speed: `(w·median + 20·expected)/(w + 20)` → if ratio < 0.70 emit `limit_to`.
+With **soft** evidence the speed is capped at no less than half the expected speed. **Hard** evidence (≥150 weighted samples, ≥20 drivers, ≥3 days) is applied as measured, with a 5 km/h minimum.
 
 ### Deviation-based (drivers avoid an edge/turn)
 `detect_exposures(planned, actual)` records each planned segment the driver reached, and whether they took it. It stops at the first deviation, because the app reroutes after that.
@@ -153,7 +157,7 @@ The avoidance rate uses a Beta(1, 19) prior (~5% background): `(dev + 1)/(expose
 | Hysteresis (on 0.70 / off 0.80; on 0.30 / off 0.20) | Rules don't flap on and off |
 | Soft caps (speed ≥ 50%, priority ≥ 0.7) | Soft signals stay bounded |
 | Hierarchy floor | Soft signals cannot make a main road's `speed × priority` fall below 1.1 × residential baseline |
-| Validation | Overlays can't boost (priority ≤ 1, speed ≤ map). Only `ops` may set priority 0 |
+| Validation | Overlays can't boost (priority ≤ 1, speed ≤ expected). Only `ops` may set priority 0 |
 | TTL (7 days) | A rule dies unless the next run re-emits it |
 | Strictest-wins dedupe | A re-emitted rule never compounds itself |
 
@@ -174,7 +178,7 @@ The avoidance rate uses a Beta(1, 19) prior (~5% background): `(dev + 1)/(expose
 
 ## 8. Acceptance criteria
 
-Covered by `python -m unittest discover -s tests -t .` (18 tests):
+Covered by `python -m unittest discover -s tests -t .` ([test_routing.py](../tests/test_routing.py); speed/avoidance learning is in [test_traffic.py](../tests/test_traffic.py)):
 
 - [x] With no priorities, the faster residential shortcut wins. With the baseline, the main road wins.
 - [x] A soft slowdown on a main road emits a speed rule, and the route still uses the main road.
@@ -182,7 +186,7 @@ Covered by `python -m unittest discover -s tests -t .` (18 tests):
 - [x] Hard deviation evidence (≥0.8 avoidance, many drivers and days) sets priority 0.01, and the route switches.
 - [x] A single driver's samples never create a rule.
 - [x] Data older than the window never creates a rule. Hysteresis keeps a rule during partial recovery.
-- [x] Telemetry never gives a residential edge priority above 0.5 or speed above its map speed.
+- [x] Telemetry never gives a residential edge priority above 0.5 or speed above the expected speed.
 - [x] Overlays with priority > 1, or telemetry priority 0, are rejected. An ops closure (0) blocks the edge.
 - [x] Shuffling the overlays gives the same edge evaluation. Duplicates keep the strictest value. Expired rules are dropped.
 - [x] The GraphHopper payload matches the documented format in both `expression` and `area` mode.

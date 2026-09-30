@@ -1,7 +1,7 @@
 {
   "distance_influence": 0,
   "speed": [
-    { "if": "true", "limit_to": "car_average_speed" }
+    { "if": "true", "limit_to": "30" }
   ],
   "priority": [
     { "if": "!car_access", "multiply_by": "0" },

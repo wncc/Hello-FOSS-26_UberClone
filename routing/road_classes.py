@@ -36,21 +36,10 @@ BASE_PRIORITY: dict[RoadClass, float] = {
     RoadClass.OTHER: 0.3,
 }
 
-# Fallback free-flow speeds (km/h) used when an edge carries no speed of its
-# own. GraphHopper uses `car_average_speed` from OSM tags instead.
-DEFAULT_SPEED_KMH: dict[RoadClass, float] = {
-    RoadClass.MOTORWAY: 100.0,
-    RoadClass.TRUNK: 80.0,
-    RoadClass.PRIMARY: 60.0,
-    RoadClass.SECONDARY: 50.0,
-    RoadClass.TERTIARY: 40.0,
-    RoadClass.UNCLASSIFIED: 30.0,
-    RoadClass.RESIDENTIAL: 30.0,
-    RoadClass.LIVING_STREET: 10.0,
-    RoadClass.SERVICE: 15.0,
-    RoadClass.TRACK: 10.0,
-    RoadClass.OTHER: 20.0,
-}
+# Every road is assumed to have the same expected speed until telemetry says
+# otherwise. Road preference comes only from priority; slowness only from data.
+# (Per-class / map speeds and an ETA prior are tracked in docs/issues/001.)
+UNIFORM_SPEED_KMH = 30.0
 
 MAIN_ROAD_CLASSES = frozenset({
     RoadClass.MOTORWAY, RoadClass.TRUNK, RoadClass.PRIMARY,
@@ -62,14 +51,9 @@ def priority_for(road_class: RoadClass) -> float:
     return BASE_PRIORITY.get(road_class, BASE_PRIORITY[RoadClass.OTHER])
 
 
-def default_speed_for(road_class: RoadClass) -> float:
-    return DEFAULT_SPEED_KMH.get(road_class, DEFAULT_SPEED_KMH[RoadClass.OTHER])
-
-
-def base_rate(road_class: RoadClass, speed_kmh: float | None = None) -> float:
+def base_rate(road_class: RoadClass, speed_kmh: float = UNIFORM_SPEED_KMH) -> float:
     """speed x priority: the denominator of the cost formula (higher = cheaper)."""
-    speed = speed_kmh if speed_kmh is not None else default_speed_for(road_class)
-    return speed * priority_for(road_class)
+    return speed_kmh * priority_for(road_class)
 
 
 # Soft telemetry may slow a main road down, but never below this margin over

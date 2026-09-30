@@ -8,12 +8,19 @@ Guardrails, in the order they apply:
   5. Soft caps        SOFT evidence can only slow/penalize a road by a bounded amount.
   6. Hierarchy floor  SOFT evidence can never push a main road below residential baseline.
   7. TTL              rules expire unless the next run re-emits them.
+
+With a TrafficContext (a fitted speed_model.FittedSpeedModel):
+  * speed samples are de-trended first, so the speed rule reflects road
+    *condition* only; time-of-week traffic is applied per request instead.
+  * avoidance during the segment's peak hours is counted separately and can
+    only produce a rule that is active during those peak hours.
 """
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from typing import Protocol
 
 from .models import (
     EdgeMeta, Evidence, Op, RoadHealth, SegmentExposure, SegmentIs, SegmentStats,
@@ -57,12 +64,22 @@ class TelemetryPolicy:
 DEFAULT_POLICY = TelemetryPolicy()
 
 
+class TrafficContext(Protocol):
+    def detrend(self, sample: SpeedSample) -> float: ...
+    def is_peak(self, segment_id: str, when: datetime) -> bool: ...
+    def peak_buckets(self, edge: EdgeMeta) -> frozenset[int]: ...
+
+
 def speed_rule_id(segment_id: str) -> str:
     return f"tele.speed.{segment_id}"
 
 
 def deviation_rule_id(segment_id: str) -> str:
     return f"tele.dev.{segment_id}"
+
+
+def peak_deviation_rule_id(segment_id: str) -> str:
+    return f"tele.dev.peak.{segment_id}"
 
 
 # --------------------------------------------------------------------------- #
@@ -85,7 +102,8 @@ def _weighted_median(pairs: list[tuple[float, float]]) -> float:
 
 
 def aggregate(speed_samples: list[SpeedSample], exposures: list[SegmentExposure],
-              now: datetime, policy: TelemetryPolicy = DEFAULT_POLICY) -> dict[str, SegmentStats]:
+              now: datetime, policy: TelemetryPolicy = DEFAULT_POLICY,
+              traffic: TrafficContext | None = None) -> dict[str, SegmentStats]:
     window = timedelta(days=policy.window_days)
     speeds: dict[str, list[tuple[float, float]]] = defaultdict(list)
     speed_drivers: dict[str, set] = defaultdict(set)
@@ -94,12 +112,17 @@ def aggregate(speed_samples: list[SpeedSample], exposures: list[SegmentExposure]
     dev_w: dict[str, float] = defaultdict(float)
     dev_drivers: dict[str, set] = defaultdict(set)
     dev_days: dict[str, set] = defaultdict(set)
+    peak_exp_w: dict[str, float] = defaultdict(float)
+    peak_dev_w: dict[str, float] = defaultdict(float)
+    peak_dev_drivers: dict[str, set] = defaultdict(set)
+    peak_dev_days: dict[str, set] = defaultdict(set)
 
     for s in speed_samples:
         age = now - s.observed_at
         if age > window or s.speed_kmh < 0:
             continue
-        speeds[s.segment_id].append((s.speed_kmh, decay_weight(age, policy.half_life_days)))
+        speed = s.speed_kmh * traffic.detrend(s) if traffic else s.speed_kmh
+        speeds[s.segment_id].append((speed, decay_weight(age, policy.half_life_days)))
         speed_drivers[s.segment_id].add(s.driver_id)
         speed_days[s.segment_id].add(s.observed_at.date())
 
@@ -108,14 +131,17 @@ def aggregate(speed_samples: list[SpeedSample], exposures: list[SegmentExposure]
         if age > window:
             continue
         w = decay_weight(age, policy.half_life_days)
-        exp_w[e.segment_id] += w
+        peak = traffic is not None and traffic.is_peak(e.segment_id, e.observed_at)
+        ew, dw, dd, ds = ((peak_exp_w, peak_dev_w, peak_dev_drivers, peak_dev_days) if peak
+                          else (exp_w, dev_w, dev_drivers, dev_days))
+        ew[e.segment_id] += w
         if not e.followed:
-            dev_w[e.segment_id] += w
-            dev_drivers[e.segment_id].add(e.driver_id)
-            dev_days[e.segment_id].add(e.observed_at.date())
+            dw[e.segment_id] += w
+            dd[e.segment_id].add(e.driver_id)
+            ds[e.segment_id].add(e.observed_at.date())
 
     stats = {}
-    for seg in set(speeds) | set(exp_w):
+    for seg in set(speeds) | set(exp_w) | set(peak_exp_w):
         pairs = speeds.get(seg, [])
         stats[seg] = SegmentStats(
             segment_id=seg,
@@ -127,6 +153,10 @@ def aggregate(speed_samples: list[SpeedSample], exposures: list[SegmentExposure]
             deviation_weight=dev_w.get(seg, 0.0),
             deviating_drivers=len(dev_drivers.get(seg, ())),
             deviation_days=len(dev_days.get(seg, ())),
+            peak_exposure_weight=peak_exp_w.get(seg, 0.0),
+            peak_deviation_weight=peak_dev_w.get(seg, 0.0),
+            peak_deviating_drivers=len(peak_dev_drivers.get(seg, ())),
+            peak_deviation_days=len(peak_dev_days.get(seg, ())),
         )
     return stats
 
@@ -167,16 +197,27 @@ def shrunk_avoidance_rate(s: SegmentStats, p: TelemetryPolicy = DEFAULT_POLICY) 
     return (s.deviation_weight + p.avoid_prior_a) / (s.exposure_weight + p.avoid_prior_a + p.avoid_prior_b)
 
 
+def _peak_view(s: SegmentStats) -> SegmentStats:
+    return replace(s, exposure_weight=s.peak_exposure_weight, deviation_weight=s.peak_deviation_weight,
+                   deviating_drivers=s.peak_deviating_drivers, deviation_days=s.peak_deviation_days)
+
+
 def road_health(edge: EdgeMeta, s: SegmentStats, p: TelemetryPolicy = DEFAULT_POLICY) -> RoadHealth:
     ratio = shrunk_speed_ratio(s, edge.speed_kmh, p)
     rate = shrunk_avoidance_rate(s, p)
+    dev_evidence = deviation_evidence(s, p)
+    peak = _peak_view(s)
     return RoadHealth(
         segment_id=edge.segment_id,
         speed_ratio=ratio,
         avoidance_rate=rate,
         health=round(0.5 * ratio + 0.5 * (1.0 - rate), 4),
         speed_evidence=speed_evidence(s, p),
-        deviation_evidence=deviation_evidence(s, p),
+        deviation_evidence=dev_evidence,
+        peak_avoidance_rate=shrunk_avoidance_rate(peak, p) if s.peak_exposure_weight else None,
+        peak_deviation_evidence=deviation_evidence(peak, p),
+        suspected_map_error=(dev_evidence is Evidence.HARD and rate >= p.avoid_rate_kill
+                             and s.speed_weight == 0),
     )
 
 
@@ -225,7 +266,8 @@ def _apply_hierarchy_floor(edge: EdgeMeta, speed: float | None, mult: float | No
 
 def derive_rules(edges: dict[str, EdgeMeta], stats: dict[str, SegmentStats], now: datetime,
                  previously_active: set[str] = frozenset(),
-                 policy: TelemetryPolicy = DEFAULT_POLICY) -> tuple[list[Statement], list[RoadHealth]]:
+                 policy: TelemetryPolicy = DEFAULT_POLICY,
+                 traffic: TrafficContext | None = None) -> tuple[list[Statement], list[RoadHealth]]:
     rules: list[Statement] = []
     health: list[RoadHealth] = []
     expires = now + policy.rule_ttl
@@ -253,4 +295,29 @@ def derive_rules(edges: dict[str, EdgeMeta], stats: dict[str, SegmentStats], now
                 Target.PRIORITY, cond, Op.MULTIPLY_BY, round(mult, 3), Source.TELEMETRY_DEVIATION,
                 deviation_rule_id(seg_id), expires_at=expires,
                 reason=f"{h.deviation_evidence.value}: avoidance_rate={h.avoidance_rate:.2f}"))
+
+        if traffic is not None and h.peak_avoidance_rate is not None:
+            peak_rule = _peak_rule(edge, h, mult, peak_deviation_rule_id(seg_id) in previously_active,
+                                   traffic, expires, policy)
+            if peak_rule:
+                rules.append(peak_rule)
     return rules, health
+
+
+def _peak_rule(edge: EdgeMeta, h: RoadHealth, permanent_mult: float | None, was_active: bool,
+               traffic: TrafficContext, expires: datetime, p: TelemetryPolicy) -> Statement | None:
+    """Avoidance seen only at rush hour: penalize the segment only in its peak buckets."""
+    view = replace(h, avoidance_rate=h.peak_avoidance_rate, deviation_evidence=h.peak_deviation_evidence)
+    mult = _proposed_priority(view, was_active, p)
+    if mult is not None and view.deviation_evidence is not Evidence.HARD:
+        _, mult = _apply_hierarchy_floor(edge, None, mult)
+    if mult is None or (permanent_mult is not None and mult >= permanent_mult):
+        return None
+    buckets = traffic.peak_buckets(edge)
+    if not buckets:
+        return None
+    return Statement(
+        Target.PRIORITY, SegmentIs(edge.segment_id, edge.road_class), Op.MULTIPLY_BY, round(mult, 3),
+        Source.TELEMETRY_DEVIATION, peak_deviation_rule_id(edge.segment_id), expires_at=expires,
+        active_buckets=buckets,
+        reason=f"peak {view.deviation_evidence.value}: avoidance_rate={view.avoidance_rate:.2f}")

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Union
 
-from .road_classes import RoadClass
+from .road_classes import UNIFORM_SPEED_KMH, RoadClass
 
 
 # --------------------------------------------------------------------------- #
@@ -25,7 +25,7 @@ class EdgeMeta:
     to_node: str
     road_class: RoadClass
     distance_m: float
-    speed_kmh: float  # free-flow / map speed (GraphHopper: car_average_speed)
+    speed_kmh: float = UNIFORM_SPEED_KMH  # expected speed; uniform until per-road speeds exist
     osm_way_id: int | None = None
     geometry: tuple[tuple[float, float], ...] = ()  # (lat, lon) points
 
@@ -74,6 +74,7 @@ class Source(str, Enum):
     BASELINE = "baseline"
     TELEMETRY_SPEED = "telemetry.speed"
     TELEMETRY_DEVIATION = "telemetry.deviation"
+    TELEMETRY_TRAFFIC = "telemetry.traffic"  # time-of-week slowdown, chosen per request
     OPS = "ops"  # manual closures / incidents
 
 
@@ -111,9 +112,13 @@ class Statement:
     rule_id: str
     reason: str = ""
     expires_at: datetime | None = None
+    # Time-of-week buckets this rule applies in (see time_buckets.py); None = always.
+    active_buckets: frozenset[int] | None = None
 
-    def is_active(self, now: datetime) -> bool:
-        return self.expires_at is None or now < self.expires_at
+    def is_active(self, now: datetime, bucket: int | None = None) -> bool:
+        if self.expires_at is not None and now >= self.expires_at:
+            return False
+        return self.active_buckets is None or (bucket is not None and bucket in self.active_buckets)
 
 
 @dataclass
@@ -148,6 +153,12 @@ class SegmentStats:
     deviation_weight: float       # decay-weighted times drivers avoided it
     deviating_drivers: int
     deviation_days: int
+    # Exposures during the segment's peak traffic hours, kept apart from the ones
+    # above so rush-hour avoidance is not mistaken for a permanently bad road.
+    peak_exposure_weight: float = 0.0
+    peak_deviation_weight: float = 0.0
+    peak_deviating_drivers: int = 0
+    peak_deviation_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -158,6 +169,11 @@ class RoadHealth:
     health: float           # 0 (bad) .. 1 (healthy)
     speed_evidence: Evidence
     deviation_evidence: Evidence
+    peak_avoidance_rate: float | None = None
+    peak_deviation_evidence: Evidence = Evidence.NONE
+    # Strongly avoided and nobody drives it at all: likely a map error (gate,
+    # missing turn restriction, closed road). Send to the map-fix queue.
+    suspected_map_error: bool = False
 
 
 @dataclass(frozen=True)

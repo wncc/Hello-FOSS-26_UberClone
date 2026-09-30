@@ -11,8 +11,11 @@ from typing import Protocol
 from .cost import edge_cost, edge_time_s, route_eta_s
 from .graph import RoadGraph, haversine_m
 from .models import (
-    CustomModel, EdgeEvaluation, EdgeMeta, RoadHealth, RouteResult, SegmentExposure,
-    SpeedSample, Statement, Target,
+    MAX_SPEED, CustomModel, EdgeEvaluation, EdgeMeta, RestrictedZone, RoadHealth, RouteResult,
+    SegmentExposure, SpeedSample, Statement, Target,
+)
+from .restrictions import (
+    RouteOptions, conditional_statements, has_car_toll, request_statements, zone_statements,
 )
 from .rule_engine import CompiledModel, baseline_model, merge_models
 from .speed_model import DEFAULT_SPEED_POLICY, FittedSpeedModel, SpeedModelPolicy, fit_speed_model
@@ -102,16 +105,24 @@ class RoutingService:
 
     With `buckets` set, it also learns time-of-week traffic: the fitted speed
     model supplies per-departure traffic rules and a time-aware ETA.
+
+    Map restrictions (access, speed limits, time-based closures, restricted
+    zones) come from the edges and `zones`, e.g. as produced by osm_import.
     """
 
     def __init__(self, backend: RouterBackend, edges: dict[str, EdgeMeta],
                  base: CustomModel | None = None, policy: TelemetryPolicy = DEFAULT_POLICY,
                  buckets: TimeBuckets | None = None,
-                 speed_policy: SpeedModelPolicy = DEFAULT_SPEED_POLICY):
+                 speed_policy: SpeedModelPolicy = DEFAULT_SPEED_POLICY,
+                 zones: list[RestrictedZone] = ()):
         self.backend = backend
         self.edges = edges
         self.base = base or baseline_model()
         _check_expected_speeds(self.base, edges)
+        self.zones = {z.zone_id: z for z in zones}
+        self.map_rules = conditional_statements(edges.values()) + zone_statements(zones)
+        if buckets is None and any(r.active_buckets for r in self.map_rules):
+            raise ValueError("time-based closures or zones need `buckets` (the city's local time)")
         self.policy = policy
         self.buckets = buckets
         self.speed_policy = speed_policy
@@ -138,24 +149,27 @@ class RoutingService:
     def set_ops_rules(self, rules: list[Statement]) -> None:
         self.ops_rules = list(rules)
 
-    def model_for_request(self, now: datetime | None = None, depart_at: datetime | None = None) -> CustomModel:
+    def model_for_request(self, now: datetime | None = None, depart_at: datetime | None = None,
+                          options: RouteOptions | None = None) -> CustomModel:
         now = now or datetime.now(timezone.utc)
         bucket = self.buckets.of(depart_at or now) if self.buckets else None
         traffic = self.speed_model.traffic_statements(bucket) if self.speed_model and bucket is not None else []
-        return merge_models(self.base, [self.telemetry_rules, self.ops_rules, traffic], now, bucket)
+        layers = [self.map_rules, self.telemetry_rules, self.ops_rules, traffic, request_statements(options)]
+        return merge_models(self.base, layers, now, bucket, self.zones)
 
     def eta_s(self, path: list[EdgeMeta], depart_at: datetime, fallback_s: float) -> float:
         return route_eta_s(path, depart_at, self.speed_model.speed_kmh) if self.speed_model and path else fallback_s
 
     def route(self, start: LatLon, end: LatLon, now: datetime | None = None,
-              depart_at: datetime | None = None) -> RouteResult | None:
+              depart_at: datetime | None = None, options: RouteOptions | None = None) -> RouteResult | None:
         now = now or datetime.now(timezone.utc)
         depart_at = depart_at or now
-        result = self.backend.route(start, end, self.model_for_request(now, depart_at))
+        result = self.backend.route(start, end, self.model_for_request(now, depart_at, options))
         if result is None:
             return None
         path = [self.edges[s] for s in result.segments if s in self.edges]
-        return replace(result, eta_s=self.eta_s(path, depart_at, result.eta_s))
+        return replace(result, eta_s=self.eta_s(path, depart_at, result.eta_s),
+                       toll_segments=[e.segment_id for e in path if has_car_toll(e)])
 
 
 def _check_expected_speeds(base: CustomModel, edges: dict[str, EdgeMeta]) -> None:
@@ -163,8 +177,14 @@ def _check_expected_speeds(base: CustomModel, edges: dict[str, EdgeMeta]) -> Non
     limits = [s.value for s in base.speed if s.target is Target.SPEED and isinstance(s.value, (int, float))]
     if not limits:
         return
-    expected = min(limits)
-    mismatched = [e.segment_id for e in edges.values() if e.speed_kmh != expected]
+    uniform = min(limits)
+    uses_limit = any(s.value == MAX_SPEED for s in base.speed)
+
+    def expected(e: EdgeMeta) -> float:
+        return min(uniform, e.max_speed_kmh) if uses_limit and e.max_speed_kmh is not None else uniform
+
+    mismatched = [e.segment_id for e in edges.values() if e.speed_kmh != expected(e)]
     if mismatched:
-        raise ValueError(f"baseline assumes {expected} km/h on every road, but {len(mismatched)} edges "
-                         f"differ (e.g. {mismatched[0]}); build EdgeMeta without speed_kmh")
+        raise ValueError(f"baseline expects min({uniform} km/h, legal limit) on every road, but "
+                         f"{len(mismatched)} edges differ (e.g. {mismatched[0]}); "
+                         f"set speed_kmh with models.expected_speed_kmh()")

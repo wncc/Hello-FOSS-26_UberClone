@@ -4,7 +4,7 @@ This doc builds on [ROUTING.md](ROUTING.md). It covers how the router learns fro
 1. which roads are **slower than expected**, and whether that slowness is **traffic** (depends on the time of week) or **road condition** (permanent);
 2. which roads drivers **avoid**, without mistaking rush-hour avoidance for a bad road.
 
-**Starting assumption:** every road has the same expected speed, `UNIFORM_SPEED_KMH` = 30 km/h. Any slowness comes only from data. Initial ETA approximation (per-class speeds, a starting congestion table, calibration) is postponed: see [issue 001](issues/001-eta-approximation.md).
+**Starting assumption:** every road has the same expected speed, `UNIFORM_SPEED_KMH` = 30 km/h, capped at its legal limit ([MAP_DATA.md](MAP_DATA.md)). Any slowness beyond that comes only from data. Initial ETA approximation (per-class speeds, a starting congestion table, calibration) is postponed: see [issue 001](issues/001-eta-approximation.md).
 Out of scope: yearly and festival patterns, and live incident traffic.
 
 ---

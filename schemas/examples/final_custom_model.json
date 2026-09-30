@@ -5,6 +5,10 @@
       "limit_to": 30.0
     },
     {
+      "if": "true",
+      "limit_to": "max_speed"
+    },
+    {
       "if": "segment_id == 15933",
       "limit_to": 15.0
     }
@@ -45,6 +49,26 @@
     {
       "if": "road_class == OTHER",
       "multiply_by": 0.3
+    },
+    {
+      "if": "road_access == NO",
+      "multiply_by": 0.0
+    },
+    {
+      "if": "road_access == PRIVATE",
+      "multiply_by": 0.0
+    },
+    {
+      "if": "road_access == DELIVERY",
+      "multiply_by": 0.0
+    },
+    {
+      "if": "road_access == DESTINATION",
+      "multiply_by": 0.1
+    },
+    {
+      "if": "road_access == DISCOURAGED",
+      "multiply_by": 0.5
     },
     {
       "if": "segment_id == 8442",

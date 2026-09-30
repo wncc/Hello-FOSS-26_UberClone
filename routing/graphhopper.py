@@ -23,8 +23,8 @@ import urllib.request
 from dataclasses import dataclass
 
 from .models import (
-    EDGE_AVERAGE_SPEED, Always, Condition, CustomModel, EdgeMeta, RoadClassIs,
-    RouteResult, SegmentIs, Source, Statement,
+    Always, Condition, CustomModel, EdgeMeta, InArea, RestrictedZone, RoadAccessIs, RoadClassIs,
+    RouteResult, SegmentIs, Source, Statement, TollIs,
 )
 
 log = logging.getLogger(__name__)
@@ -36,6 +36,10 @@ def area_id(segment_id: str) -> str:
     return "seg_" + re.sub(r"[^A-Za-z0-9_]", "_", segment_id)
 
 
+def zone_area_id(zone_id: str) -> str:
+    return "zone_" + re.sub(r"[^A-Za-z0-9_]", "_", zone_id)
+
+
 def condition_expr(cond: Condition, segment_mode: str = "area") -> str:
     if isinstance(cond, Always):
         return "true"
@@ -45,11 +49,17 @@ def condition_expr(cond: Condition, segment_mode: str = "area") -> str:
         base = (f"in_{area_id(cond.segment_id)}" if segment_mode == "area"
                 else f"segment_id == {cond.segment_id}")  # requires a custom encoded value
         return f"{base} && road_class == {cond.road_class.value}" if cond.road_class else base
+    if isinstance(cond, RoadAccessIs):
+        return f"road_access == {cond.access.value}"
+    if isinstance(cond, TollIs):
+        return f"toll == {cond.toll.value}"
+    if isinstance(cond, InArea):
+        return f"in_{zone_area_id(cond.zone_id)}"
     raise TypeError(f"unsupported condition {cond!r}")
 
 
 def statement_json(stmt: Statement, segment_mode: str = "area") -> dict:
-    value = stmt.value if stmt.value == EDGE_AVERAGE_SPEED else float(stmt.value)
+    value = stmt.value if isinstance(stmt.value, str) else float(stmt.value)
     return {"if": condition_expr(stmt.condition, segment_mode), stmt.op.value: value}
 
 
@@ -101,14 +111,24 @@ def to_graphhopper(model: CustomModel, edges: dict[str, EdgeMeta], include_basel
             if polygon is None:
                 log.warning("skipping %s: no geometry for segment %s", stmt.rule_id, seg)
                 continue
-            features[area_id(seg)] = {
-                "type": "Feature", "id": area_id(seg), "properties": {},
-                "geometry": {"type": "Polygon", "coordinates": [polygon]},
-            }
+            features[area_id(seg)] = _feature(area_id(seg), polygon)
+        if isinstance(stmt.condition, InArea):
+            zone = model.areas[stmt.condition.zone_id]
+            features[zone_area_id(zone.zone_id)] = _feature(zone_area_id(zone.zone_id), _ring_lonlat(zone))
         out[stmt.target.value].append(statement_json(stmt, segment_mode))
     if features:
         out["areas"] = {"type": "FeatureCollection", "features": list(features.values())}
     return out
+
+
+def _feature(fid: str, ring: list[list[float]]) -> dict:
+    return {"type": "Feature", "id": fid, "properties": {},
+            "geometry": {"type": "Polygon", "coordinates": [ring]}}
+
+
+def _ring_lonlat(zone: RestrictedZone) -> list[list[float]]:
+    ring = [[lon, lat] for lat, lon in zone.polygon]
+    return ring if ring[0] == ring[-1] else ring + [ring[0]]
 
 
 def select_overlays_near(model: CustomModel, edges: dict[str, EdgeMeta], start: LatLon, end: LatLon,
@@ -131,7 +151,7 @@ def select_overlays_near(model: CustomModel, edges: dict[str, EdgeMeta], start: 
                      key=lambda s: float(s.value))
         return fixed + seg[:max_rules]
 
-    return CustomModel(keep(model.speed), keep(model.priority), model.distance_influence)
+    return CustomModel(keep(model.speed), keep(model.priority), model.distance_influence, model.areas)
 
 
 @dataclass

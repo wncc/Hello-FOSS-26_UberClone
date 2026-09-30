@@ -6,5 +6,23 @@
   "road_class": "PRIMARY",
   "distance_m": 742.5,
   "speed_kmh": 30.0,
-  "geometry": [[12.9700, 77.5900], [12.9722, 77.5925], [12.9745, 77.5950]]
+  "geometry": [
+    [
+      12.97,
+      77.59
+    ],
+    [
+      12.9722,
+      77.5925
+    ],
+    [
+      12.9745,
+      77.595
+    ]
+  ],
+  "max_speed_kmh": 50.0,
+  "max_speed_source": "sign",
+  "road_access": "YES",
+  "toll": "NO",
+  "no_access_buckets": null
 }

@@ -153,6 +153,7 @@ class IntegrationFormatTests(unittest.TestCase):
         ]
         gh = to_graphhopper(merge_models(baseline_model(), [overlays], NOW), {}, segment_mode="expression")
         self.assertEqual(gh["speed"], [{"if": "true", "limit_to": 30.0},
+                                       {"if": "true", "limit_to": "max_speed"},
                                        {"if": "segment_id == 15933", "limit_to": 15.0}])
         self.assertIn({"if": "road_class == RESIDENTIAL", "multiply_by": 0.5}, gh["priority"])
         self.assertEqual(gh["priority"][-1], {"if": "segment_id == 8442", "multiply_by": 0.01})
@@ -177,11 +178,23 @@ class DeployConfigTests(unittest.TestCase):
     def test_server_baseline_matches_code(self):
         import json
         from pathlib import Path
-        from routing import BASE_PRIORITY
         file = Path(__file__).parent.parent / "deploy" / "graphhopper" / "car_hierarchy.json"
-        server = {st["if"].split("== ")[1]: float(st["multiply_by"])
-                  for st in json.loads(file.read_text())["priority"] if "road_class" in st["if"]}
-        self.assertEqual(server, {rc.value: p for rc, p in BASE_PRIORITY.items() if p < 1.0})
+
+        def norm(statements):
+            out = []
+            for st in statements:
+                (op, value), = ((k, v) for k, v in st.items() if k != "if")
+                try:
+                    value = float(value)
+                except ValueError:
+                    pass
+                out.append((st["if"], op, value))
+            return out
+
+        server = json.loads(file.read_text())
+        code = to_graphhopper(baseline_model(), {}, include_baseline=True)
+        for key in ("speed", "priority"):
+            self.assertEqual(norm(server[key]), norm(code[key]), key)
 
 
 if __name__ == "__main__":

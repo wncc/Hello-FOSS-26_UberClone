@@ -8,10 +8,12 @@ from .engine import LocalAStarRouter, RouterBackend, RoutingService
 from .graph import RoadGraph
 from .graphhopper import GraphHopperRouter, to_graphhopper
 from .models import (
-    CustomModel, EdgeMeta, Op, RoadClassIs, RouteResult, SegmentExposure, SegmentIs,
-    Source, SpeedSample, Statement, Target,
+    CustomModel, EdgeMeta, InArea, Op, RestrictedZone, RoadAccess, RoadAccessIs, RoadClassIs, RouteResult,
+    SegmentExposure, SegmentIs, Source, SpeedLimitSource, SpeedSample, Statement, Target, Toll, TollIs,
+    ZoneKind, expected_speed_kmh,
 )
 from .monitoring import detect_exposures, route_quality
+from .restrictions import RouteOptions
 from .road_classes import BASE_PRIORITY, UNIFORM_SPEED_KMH, RoadClass, priority_for
 from .rule_engine import CompiledModel, baseline_model, merge_models
 from .speed_model import FittedSpeedModel, SegmentKind, SpeedModelPolicy, fit_speed_model
@@ -27,4 +29,6 @@ __all__ = [
     "road_health", "route_cost", "route_quality", "to_graphhopper",
     "route_eta_s", "FittedSpeedModel",
     "SegmentKind", "SpeedModelPolicy", "fit_speed_model", "IST", "TimeBuckets",
+    "InArea", "RestrictedZone", "RoadAccess", "RoadAccessIs", "RouteOptions", "SpeedLimitSource",
+    "Toll", "TollIs", "ZoneKind", "expected_speed_kmh",
 ]

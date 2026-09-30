@@ -13,6 +13,30 @@ from .road_classes import UNIFORM_SPEED_KMH, RoadClass
 # Road metadata
 # --------------------------------------------------------------------------- #
 
+class RoadAccess(str, Enum):
+    """Car access, named like GraphHopper's `road_access` encoded value."""
+    DESIGNATED = "DESIGNATED"
+    YES = "YES"
+    DISCOURAGED = "DISCOURAGED"
+    DESTINATION = "DESTINATION"   # only to reach something on this road (e.g. residents, customers)
+    DELIVERY = "DELIVERY"
+    PRIVATE = "PRIVATE"
+    NO = "NO"
+
+
+class Toll(str, Enum):
+    """Named like GraphHopper's `toll` encoded value. HGV = toll for trucks only."""
+    MISSING = "MISSING"
+    NO = "NO"
+    HGV = "HGV"
+    ALL = "ALL"
+
+
+class SpeedLimitSource(str, Enum):
+    SIGN = "sign"                    # explicit maxspeed tag (posted limit or zone code)
+    LEGAL_DEFAULT = "legal_default"  # national/state default for this kind of road
+
+
 @dataclass(frozen=True)
 class EdgeMeta:
     """A directed road segment.
@@ -25,9 +49,47 @@ class EdgeMeta:
     to_node: str
     road_class: RoadClass
     distance_m: float
-    speed_kmh: float = UNIFORM_SPEED_KMH  # expected speed; uniform until per-road speeds exist
+    # Expected driving speed = min(uniform speed, legal limit). Telemetry measures slowness against it.
+    speed_kmh: float = UNIFORM_SPEED_KMH
     osm_way_id: int | None = None
     geometry: tuple[tuple[float, float], ...] = ()  # (lat, lon) points
+    max_speed_kmh: float | None = None               # legal limit; None = unknown / no limit
+    max_speed_source: SpeedLimitSource | None = None
+    road_access: RoadAccess = RoadAccess.YES
+    toll: Toll = Toll.MISSING
+    # Time-of-week buckets in which cars may not use this road (from *:conditional tags).
+    no_access_buckets: frozenset[int] | None = None
+
+
+def expected_speed_kmh(max_speed_kmh: float | None, uniform_kmh: float = UNIFORM_SPEED_KMH) -> float:
+    return uniform_kmh if max_speed_kmh is None else min(uniform_kmh, max_speed_kmh)
+
+
+class ZoneKind(str, Enum):
+    NO_ENTRY = "no_entry"                  # e.g. military area, closed campus: blocked
+    AVOID = "avoid"                        # e.g. event area, congestion zone: strongly penalized
+    DESTINATION_ONLY = "destination_only"  # e.g. airport forecourt, gated township
+
+
+@dataclass(frozen=True)
+class RestrictedZone:
+    zone_id: str
+    kind: ZoneKind
+    polygon: tuple[tuple[float, float], ...]  # outer ring, (lat, lon)
+    name: str = ""
+    source: str = "ops"                         # "osm" or "ops"
+    active_buckets: frozenset[int] | None = None  # None = always
+
+    def contains(self, point: tuple[float, float]) -> bool:
+        lat, lon = point
+        inside = False
+        ring = self.polygon
+        for (lat1, lon1), (lat2, lon2) in zip(ring, ring[1:] + ring[:1]):
+            if (lat1 > lat) != (lat2 > lat):
+                cross = lon1 + (lat - lat1) * (lon2 - lon1) / (lat2 - lat1)
+                if lon < cross:
+                    inside = not inside
+        return inside
 
 
 # --------------------------------------------------------------------------- #
@@ -75,7 +137,9 @@ class Source(str, Enum):
     TELEMETRY_SPEED = "telemetry.speed"
     TELEMETRY_DEVIATION = "telemetry.deviation"
     TELEMETRY_TRAFFIC = "telemetry.traffic"  # time-of-week slowdown, chosen per request
-    OPS = "ops"  # manual closures / incidents
+    MAP = "map"  # restrictions from map data: access, conditional closures, OSM zones
+    OPS = "ops"  # manual closures / incidents / ops-defined zones
+    REQUEST = "request"  # per-trip customer preferences, e.g. avoid tolls
 
 
 @dataclass(frozen=True)
@@ -96,10 +160,26 @@ class SegmentIs:
     road_class: RoadClass | None = None
 
 
-Condition = Union[Always, RoadClassIs, SegmentIs]
+@dataclass(frozen=True)
+class RoadAccessIs:
+    access: RoadAccess
 
-# The only symbolic value we allow: the edge's own map speed.
-EDGE_AVERAGE_SPEED = "car_average_speed"
+
+@dataclass(frozen=True)
+class TollIs:
+    toll: Toll
+
+
+@dataclass(frozen=True)
+class InArea:
+    zone_id: str
+
+
+Condition = Union[Always, RoadClassIs, SegmentIs, RoadAccessIs, TollIs, InArea]
+
+# Symbolic speed values, resolved per edge (GraphHopper encoded value names).
+EDGE_AVERAGE_SPEED = "car_average_speed"   # map speed; unused while speeds are uniform
+MAX_SPEED = "max_speed"                    # legal limit
 
 
 @dataclass(frozen=True)
@@ -127,6 +207,8 @@ class CustomModel:
     priority: list[Statement] = field(default_factory=list)
     # GraphHopper: extra seconds of cost per km. 0 keeps the pure Distance / (Speed x Priority) formula.
     distance_influence: float = 0.0
+    # Polygons referenced by InArea conditions.
+    areas: dict[str, RestrictedZone] = field(default_factory=dict)
 
     def statements(self) -> list[Statement]:
         return [*self.speed, *self.priority]
@@ -193,3 +275,4 @@ class RouteResult:
     eta_s: float         # pure travel time, priority excluded
     explanation: list[EdgeEvaluation]
     geometry: list[tuple[float, float]] = field(default_factory=list)  # (lat, lon)
+    toll_segments: list[str] = field(default_factory=list)

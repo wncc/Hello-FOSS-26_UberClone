@@ -1,6 +1,6 @@
 # Routing: road hierarchy + telemetry overlays
 
-> For learning slower roads (traffic vs. road condition) and avoided roads, see [ROAD_LEARNING.md](ROAD_LEARNING.md). ETA approximation is tracked in [issue 001](issues/001-eta-approximation.md).
+> For learning slower roads (traffic vs. road condition) and avoided roads, see [ROAD_LEARNING.md](ROAD_LEARNING.md). Speed limits, private roads, tolls and restricted zones: see [MAP_DATA.md](MAP_DATA.md). ETA approximation is tracked in [issue 001](issues/001-eta-approximation.md).
 
 ## 1. Overview
 
@@ -30,7 +30,9 @@ Scope: this package is only the routing function. Trip management, the GPS pipel
 | LIVING_STREET / SERVICE | 0.2 |
 | TRACK | 0.1 |
 
-**Speed: every road is assumed to be driven at the same speed, `UNIFORM_SPEED_KMH` = 30 km/h,** until telemetry shows a road is slower (see [ROAD_LEARNING.md](ROAD_LEARNING.md)). This keeps the two ideas separate: *preference* comes only from priority, and *slowness* comes only from measured data. Per-class speeds, map speeds and a starting congestion estimate are postponed; see [issue 001](issues/001-eta-approximation.md). `RoutingService` refuses edges whose `speed_kmh` differs from the baseline speed, because telemetry measures slowness against that value.
+**Speed: every road is assumed to be driven at the same speed, `UNIFORM_SPEED_KMH` = 30 km/h, capped at its legal limit** ([MAP_DATA.md](MAP_DATA.md)), until telemetry shows a road is slower (see [ROAD_LEARNING.md](ROAD_LEARNING.md)). This keeps the two ideas separate: *preference* comes only from priority, and *slowness* comes only from measured data. Per-class speeds, map speeds and a starting congestion estimate are postponed; see [issue 001](issues/001-eta-approximation.md). `RoutingService` refuses edges whose `speed_kmh` isn't `min(30, legal limit)`, because telemetry measures slowness against that value.
+
+The baseline also always contains the access rules: private, no-entry and delivery-only roads are blocked, and destination-only roads get ×0.1.
 
 Source of truth: [routing/road_classes.py](../routing/road_classes.py). The server copy is [deploy/graphhopper/car_hierarchy.json](../deploy/graphhopper/car_hierarchy.json), and a test fails if the two drift apart.
 

@@ -1,9 +1,19 @@
 # Minimal GraphHopper server config for the hierarchy profile.
-# Keep baseline values in sync with routing/road_classes.py (a test can diff them).
+# car_hierarchy.json is generated from routing/ (tests/test_routing.py fails if they drift).
 graphhopper:
   datareader.file: /data/region-latest.osm.pbf
   graph.location: /data/graph-cache
-  graph.encoded_values: car_access, car_average_speed, road_class, road_class_link, max_speed
+
+  # road_access, toll and max_speed back the restriction rules; country + urban_density
+  # are required by the legal-default speed calculator below.
+  graph.encoded_values: car_access, car_average_speed, road_class, road_class_link, road_access, toll, max_speed, country, urban_density
+
+  # Fill max_speed from country legal defaults (osm-legal-default-speeds) where no sign is mapped.
+  max_speed_calculator.enabled: true
+  graph.urban_density.threads: 4
+
+  # Import-time restricted zones (GeoJSON), e.g. ops-defined no-entry areas that rarely change.
+  # custom_areas.directory: /data/custom_areas
 
   profiles:
     - name: car

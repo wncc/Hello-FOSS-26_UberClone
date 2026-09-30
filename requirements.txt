@@ -1,0 +1,1 @@
+osmium>=4.0  # only for routing.osm_import (reading OSM files)

@@ -26,7 +26,7 @@ from .models import (
     EdgeMeta, Evidence, Op, RoadHealth, SegmentExposure, SegmentIs, SegmentStats,
     Source, SpeedSample, Statement, Target,
 )
-from .road_classes import hierarchy_floor_rate, priority_for
+from .road_classes import RoadClass, hierarchy_floor_rate, priority_for
 from .rule_engine import MIN_SPEED_KMH, MIN_TELEMETRY_PRIORITY
 
 
@@ -250,10 +250,11 @@ def _proposed_priority(h: RoadHealth, was_active: bool, p: TelemetryPolicy) -> f
     return max(1.0 - h.avoidance_rate, p.soft_priority_floor)
 
 
-def _apply_hierarchy_floor(edge: EdgeMeta, speed: float | None, mult: float | None) -> tuple[float | None, float | None]:
+def _apply_hierarchy_floor(edge: EdgeMeta, speed: float | None, mult: float | None,
+                           priorities: dict[RoadClass, float] | None = None) -> tuple[float | None, float | None]:
     """Relax SOFT penalties so a main road stays cheaper per km than a residential street."""
-    floor = hierarchy_floor_rate(edge.road_class)
-    base_p = priority_for(edge.road_class)
+    floor = hierarchy_floor_rate(edge.road_class, priorities)
+    base_p = priority_for(edge.road_class, priorities)
     v = speed if speed is not None else edge.speed_kmh
     m = mult if mult is not None else 1.0
     if floor <= 0 or v * base_p * m >= floor:
@@ -267,7 +268,8 @@ def _apply_hierarchy_floor(edge: EdgeMeta, speed: float | None, mult: float | No
 def derive_rules(edges: dict[str, EdgeMeta], stats: dict[str, SegmentStats], now: datetime,
                  previously_active: set[str] = frozenset(),
                  policy: TelemetryPolicy = DEFAULT_POLICY,
-                 traffic: TrafficContext | None = None) -> tuple[list[Statement], list[RoadHealth]]:
+                 traffic: TrafficContext | None = None,
+                 priorities: dict[RoadClass, float] | None = None) -> tuple[list[Statement], list[RoadHealth]]:
     rules: list[Statement] = []
     health: list[RoadHealth] = []
     expires = now + policy.rule_ttl
@@ -282,7 +284,7 @@ def derive_rules(edges: dict[str, EdgeMeta], stats: dict[str, SegmentStats], now
         speed = _proposed_speed(edge, h, speed_rule_id(seg_id) in previously_active, policy)
         mult = _proposed_priority(h, deviation_rule_id(seg_id) in previously_active, policy)
         if Evidence.HARD not in (h.speed_evidence, h.deviation_evidence):
-            speed, mult = _apply_hierarchy_floor(edge, speed, mult)
+            speed, mult = _apply_hierarchy_floor(edge, speed, mult, priorities)
 
         cond = SegmentIs(seg_id, edge.road_class)
         if speed is not None:
@@ -298,19 +300,20 @@ def derive_rules(edges: dict[str, EdgeMeta], stats: dict[str, SegmentStats], now
 
         if traffic is not None and h.peak_avoidance_rate is not None:
             peak_rule = _peak_rule(edge, h, mult, peak_deviation_rule_id(seg_id) in previously_active,
-                                   traffic, expires, policy)
+                                   traffic, expires, policy, priorities)
             if peak_rule:
                 rules.append(peak_rule)
     return rules, health
 
 
 def _peak_rule(edge: EdgeMeta, h: RoadHealth, permanent_mult: float | None, was_active: bool,
-               traffic: TrafficContext, expires: datetime, p: TelemetryPolicy) -> Statement | None:
+               traffic: TrafficContext, expires: datetime, p: TelemetryPolicy,
+               priorities: dict[RoadClass, float] | None = None) -> Statement | None:
     """Avoidance seen only at rush hour: penalize the segment only in its peak buckets."""
     view = replace(h, avoidance_rate=h.peak_avoidance_rate, deviation_evidence=h.peak_deviation_evidence)
     mult = _proposed_priority(view, was_active, p)
     if mult is not None and view.deviation_evidence is not Evidence.HARD:
-        _, mult = _apply_hierarchy_floor(edge, None, mult)
+        _, mult = _apply_hierarchy_floor(edge, None, mult, priorities)
     if mult is None or (permanent_mult is not None and mult >= permanent_mult):
         return None
     buckets = traffic.peak_buckets(edge)

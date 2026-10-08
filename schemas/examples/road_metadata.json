@@ -24,5 +24,10 @@
   "max_speed_source": "sign",
   "road_access": "YES",
   "toll": "NO",
-  "no_access_buckets": null
+  "no_access_buckets": null,
+  "end_delay_s": 30.0,
+  "end_features": [
+    "traffic_signals"
+  ],
+  "traffic_calming": false
 }

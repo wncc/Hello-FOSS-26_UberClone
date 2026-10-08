@@ -5,8 +5,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from routing import (
-    IST, EdgeMeta, LocalAStarRouter, RestrictedZone, RoadAccess, RoadClass, RoadGraph, RouteOptions,
-    RoutingService, SpeedLimitSource, TimeBuckets, Toll, ZoneKind, expected_speed_kmh, to_graphhopper,
+    IST, EdgeMeta, LocalAStarRouter, MultiVehicleRouter, RestrictedZone, RoadAccess, RoadClass, RoadGraph,
+    RouteOptions, RoutingService, SpeedLimitSource, TimeBuckets, Toll, VehicleType, ZoneKind,
+    expected_speed_kmh, to_graphhopper,
 )
 from routing.graph import haversine_m
 from routing.osm_import import (
@@ -67,17 +68,19 @@ class TagParsingTests(unittest.TestCase):
 OSM_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <osm version="0.6">
  <node id="1" lat="12.9700" lon="77.5900" version="1"/>
- <node id="2" lat="12.9710" lon="77.5900" version="1"/>
- <node id="3" lat="12.9720" lon="77.5900" version="1"/>
+ <node id="2" lat="12.9710" lon="77.5900" version="1"><tag k="traffic_calming" v="bump"/></node>
+ <node id="3" lat="12.9720" lon="77.5900" version="1"><tag k="highway" v="traffic_signals"/>
+  <tag k="traffic_signals:direction" v="forward"/></node>
  <node id="4" lat="12.9730" lon="77.5900" version="1"/>
  <node id="5" lat="12.9740" lon="77.5900" version="1"/>
- <node id="6" lat="12.9750" lon="77.5900" version="1"/>
+ <node id="6" lat="12.9750" lon="77.5900" version="1"><tag k="barrier" v="toll_booth"/></node>
  <node id="7" lat="12.9760" lon="77.5900" version="1"/>
  <node id="8" lat="12.9770" lon="77.5900" version="1"/>
  <node id="9" lat="12.9800" lon="77.6000" version="1"/>
  <node id="10" lat="12.9800" lon="77.6100" version="1"/>
  <node id="11" lat="12.9900" lon="77.6100" version="1"/>
  <node id="12" lat="12.9900" lon="77.6000" version="1"/>
+ <node id="13" lat="12.9720" lon="77.5910" version="1"/>
  <way id="100" version="1"><nd ref="1"/><nd ref="2"/><nd ref="3"/>
   <tag k="highway" v="primary"/><tag k="maxspeed" v="50"/></way>
  <way id="101" version="1"><nd ref="3"/><nd ref="4"/><tag k="highway" v="motorway"/></way>
@@ -90,6 +93,12 @@ OSM_XML = """<?xml version="1.0" encoding="UTF-8"?>
  <way id="106" version="1"><nd ref="1"/><nd ref="8"/><tag k="highway" v="footway"/></way>
  <way id="107" version="1"><nd ref="9"/><nd ref="10"/><nd ref="11"/><nd ref="12"/><nd ref="9"/>
   <tag k="landuse" v="military"/><tag k="name" v="Cantonment"/></way>
+ <way id="108" version="1"><nd ref="3"/><nd ref="13"/><tag k="highway" v="secondary"/></way>
+ <relation id="200" version="1">
+  <member type="way" ref="100" role="from"/><member type="node" ref="3" role="via"/>
+  <member type="way" ref="108" role="to"/>
+  <tag k="type" v="restriction"/><tag k="restriction" v="no_right_turn"/><tag k="except" v="motorcycle"/>
+ </relation>
 </osm>
 """
 
@@ -102,13 +111,14 @@ class OsmImportTests(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as f:
             f.write(OSM_XML)
         cls.ex = extract(path)
+        cls.car, cls.bike, cls.auto = (cls.ex.edges[v] for v in (VehicleType.CAR, VehicleType.BIKE, VehicleType.AUTO))
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
     def test_segments_and_directions(self):
-        e = self.ex.edges
+        e = self.car
         self.assertIn("100:1:2", e)
         self.assertIn("100:2:1", e)          # two-way
         self.assertIn("101:3:4", e)
@@ -117,8 +127,8 @@ class OsmImportTests(unittest.TestCase):
         self.assertFalse(any(k.startswith("106:") for k in e))  # footway ignored
         self.assertAlmostEqual(e["100:1:2"].distance_m, 111, delta=2)
 
-    def test_speed_limits(self):
-        e = self.ex.edges
+    def test_car_speed_limits(self):
+        e = self.car
         self.assertEqual((e["100:1:2"].max_speed_kmh, e["100:1:2"].max_speed_source), (50, SpeedLimitSource.SIGN))
         self.assertEqual((e["101:3:4"].max_speed_kmh, e["101:3:4"].max_speed_source),
                          (120, SpeedLimitSource.LEGAL_DEFAULT))
@@ -126,12 +136,36 @@ class OsmImportTests(unittest.TestCase):
         self.assertEqual(e["104:6:7"].max_speed_kmh, 40)        # maxspeed:forward
         self.assertEqual(e["104:7:6"].max_speed_kmh, 60)        # maxspeed:backward
         self.assertEqual(e["105:7:8"].speed_kmh, 20)            # legal limit below uniform speed
-        self.assertEqual(e["100:1:2"].speed_kmh, 30)
+
+    def test_vehicle_specific_limits_access_and_tolls(self):
+        self.assertEqual(self.bike["101:3:4"].max_speed_kmh, 80)          # motorcycle expressway limit
+        self.assertEqual(self.bike["103:5:6"].max_speed_kmh, 60)          # motorcycle "other roads"
+        self.assertEqual(self.auto["102:4:5"].max_speed_kmh, 50)          # three-wheeler everywhere
+        self.assertEqual(self.auto["104:7:6"].max_speed_kmh, 50)          # sign 60, capped at category max
+        self.assertEqual(self.auto["101:3:4"].road_access, RoadAccess.NO)  # three-wheelers barred from expressways
+        self.assertEqual(self.car["104:6:7"].toll, Toll.ALL)
+        self.assertEqual(self.bike["104:6:7"].toll, Toll.NO)               # two-wheelers exempt
+
+    def test_point_delays_and_speed_breakers(self):
+        e = self.car
+        self.assertEqual((e["100:2:3"].end_features, e["100:2:3"].end_delay_s), (frozenset({"traffic_signals"}), 30))
+        self.assertEqual(e["108:13:3"].end_delay_s, 0)          # signal faces the way's forward direction only
+        self.assertEqual(e["103:5:6"].end_features, frozenset({"toll_booth"}))
+        self.assertEqual((e["103:5:6"].end_delay_s, self.bike["103:5:6"].end_delay_s), (20, 5))
+        self.assertTrue(e["100:1:2"].traffic_calming)           # bump at node 2
+        self.assertEqual(e["100:1:2"].speed_kmh, 27)            # 30 x 0.9
+        self.assertFalse(e["100:2:3"].traffic_calming)
+
+    def test_turn_restrictions_per_vehicle(self):
+        car_tr = self.ex.turn_restrictions[VehicleType.CAR]
+        self.assertFalse(car_tr.allows("100:2:3", "108:3:13"))
+        self.assertTrue(car_tr.allows("100:2:3", "101:3:4"))
+        self.assertTrue(self.ex.turn_restrictions[VehicleType.BIKE].allows("100:2:3", "108:3:13"))  # except=motorcycle
+        self.assertFalse(self.ex.turn_restrictions[VehicleType.AUTO].allows("100:2:3", "108:3:13"))
 
     def test_access_toll_conditional_zone(self):
-        e = self.ex.edges
+        e = self.car
         self.assertEqual(e["103:5:6"].road_access, RoadAccess.PRIVATE)
-        self.assertEqual(e["104:6:7"].toll, Toll.ALL)
         self.assertEqual(e["105:7:8"].no_access_buckets, frozenset({8, 9}))
         self.assertEqual(len(self.ex.zones), 1)
         zone = self.ex.zones[0]
@@ -141,21 +175,22 @@ class OsmImportTests(unittest.TestCase):
 
     def test_stats(self):
         s = self.ex.stats
-        self.assertEqual(s["ways"], 6)
-        self.assertEqual(s["access.PRIVATE"], 1)
-        self.assertEqual(s["toll.ALL"], 1)
-        self.assertEqual(s["conditional.parsed"], 1)
+        self.assertEqual(s["ways"], 7)
+        self.assertEqual(s["car.access.PRIVATE"], 1)
+        self.assertEqual(s["car.toll.ALL"], 1)
+        self.assertEqual(s["car.conditional.parsed"], 1)
         self.assertEqual(s["zones.no_entry"], 1)
+        self.assertEqual((s["nodes.traffic_signals"], s["nodes.toll_booth"], s["nodes.traffic_calming"]), (1, 1, 1))
 
     def test_json_round_trip_feeds_routing_service(self):
         path = os.path.join(self.tmp.name, "roads.json")
         save(self.ex, path)
-        edges, zones = load(path)
-        self.assertEqual(edges, self.ex.edges)
-        self.assertEqual(zones, self.ex.zones)
-        RoutingService(LocalAStarRouter(RoadGraph(
-            {n: e.geometry[i] for e in edges.values() for i, n in enumerate((e.from_node, e.to_node))},
-            list(edges.values()))), edges, buckets=BUCKETS, zones=zones)
+        loaded = load(path)
+        self.assertEqual(loaded.edges, self.ex.edges)
+        self.assertEqual(loaded.zones, self.ex.zones)
+        self.assertEqual(loaded.turn_restrictions, self.ex.turn_restrictions)
+        router = MultiVehicleRouter.local(loaded, buckets=BUCKETS)
+        self.assertEqual(set(router.services), set(VehicleType))
 
 
 #   A ── short primary (via S) ── C

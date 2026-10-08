@@ -42,7 +42,7 @@ class RouteOptions:
 
 
 def access_statements() -> list[Statement]:
-    """Part of the baseline (and the server's car_hierarchy.json): always present."""
+    """Part of the baseline (and the server's deploy/graphhopper/<vehicle>.json): always present."""
     return [
         Statement(Target.PRIORITY, RoadAccessIs(access), Op.MULTIPLY_BY, p, Source.BASELINE,
                   f"map.access.{access.value.lower()}")
@@ -75,5 +75,6 @@ def request_statements(options: RouteOptions | None) -> list[Statement]:
                       Source.REQUEST, "request.avoid_tolls")]
 
 
-def has_car_toll(edge: EdgeMeta) -> bool:
+def has_toll(edge: EdgeMeta) -> bool:
+    """Edges are built per vehicle, so this is whether *this* vehicle pays here."""
     return edge.toll is Toll.ALL

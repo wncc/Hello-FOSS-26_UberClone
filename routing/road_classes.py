@@ -47,13 +47,15 @@ MAIN_ROAD_CLASSES = frozenset({
 })
 
 
-def priority_for(road_class: RoadClass) -> float:
-    return BASE_PRIORITY.get(road_class, BASE_PRIORITY[RoadClass.OTHER])
+def priority_for(road_class: RoadClass, table: dict[RoadClass, float] | None = None) -> float:
+    table = table or BASE_PRIORITY
+    return table.get(road_class, table.get(RoadClass.OTHER, BASE_PRIORITY[RoadClass.OTHER]))
 
 
-def base_rate(road_class: RoadClass, speed_kmh: float = UNIFORM_SPEED_KMH) -> float:
+def base_rate(road_class: RoadClass, speed_kmh: float = UNIFORM_SPEED_KMH,
+              table: dict[RoadClass, float] | None = None) -> float:
     """speed x priority: the denominator of the cost formula (higher = cheaper)."""
-    return speed_kmh * priority_for(road_class)
+    return speed_kmh * priority_for(road_class, table)
 
 
 # Soft telemetry may slow a main road down, but never below this margin over
@@ -61,7 +63,7 @@ def base_rate(road_class: RoadClass, speed_kmh: float = UNIFORM_SPEED_KMH) -> fl
 HIERARCHY_MARGIN = 1.1
 
 
-def hierarchy_floor_rate(road_class: RoadClass) -> float:
+def hierarchy_floor_rate(road_class: RoadClass, table: dict[RoadClass, float] | None = None) -> float:
     if road_class not in MAIN_ROAD_CLASSES:
         return 0.0
-    return base_rate(RoadClass.RESIDENTIAL) * HIERARCHY_MARGIN
+    return base_rate(RoadClass.RESIDENTIAL, table=table) * HIERARCHY_MARGIN

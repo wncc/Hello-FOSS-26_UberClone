@@ -23,9 +23,19 @@ import urllib.request
 from dataclasses import dataclass
 
 from .models import (
-    Always, Condition, CustomModel, EdgeMeta, InArea, RestrictedZone, RoadAccessIs, RoadClassIs,
-    RouteResult, SegmentIs, Source, Statement, TollIs,
+    Always, Condition, CustomModel, EdgeMeta, HasTrafficCalming, InArea, RestrictedZone, RoadAccessIs,
+    RoadClassIs, RouteResult, SegmentIs, Source, Statement, TollIs,
 )
+from .turns import LEFT_HAND_TRAFFIC, STRAIGHT_MAX_DEG, U_TURN_MIN_DEG
+from .vehicles import VehicleProfile
+
+# ASSUMPTION, verify on the deployed version: GraphHopper's change_angle is positive for right turns.
+GH_RIGHT_TURN_IS_POSITIVE = True
+
+# Directional boolean encoded values that a small import plugin must add (docs/issues/002):
+# true when the segment ends at that point feature, in its direction of travel.
+POINT_FEATURE_EV = {"traffic_signals": "signal_ahead", "toll_booth": "toll_booth_ahead",
+                    "level_crossing": "level_crossing_ahead"}
 
 log = logging.getLogger(__name__)
 LatLon = tuple[float, float]
@@ -55,6 +65,8 @@ def condition_expr(cond: Condition, segment_mode: str = "area") -> str:
         return f"toll == {cond.toll.value}"
     if isinstance(cond, InArea):
         return f"in_{zone_area_id(cond.zone_id)}"
+    if isinstance(cond, HasTrafficCalming):
+        return "traffic_calming"  # custom encoded value (docs/issues/002)
     raise TypeError(f"unsupported condition {cond!r}")
 
 
@@ -96,13 +108,18 @@ def corridor_polygon(geometry: tuple[LatLon, ...], half_width_m: float = 6.0,
 
 
 def to_graphhopper(model: CustomModel, edges: dict[str, EdgeMeta], include_baseline: bool = True,
-                   segment_mode: str = "area") -> dict:
+                   segment_mode: str = "area", profile: VehicleProfile | None = None,
+                   extensions: bool = False) -> dict:
+    """`profile` adds turn penalties (GraphHopper 11+). `extensions` adds the rules that need
+    custom encoded values (speed breakers, point delays); leave it off on stock GraphHopper."""
     features = {}
     out = {"speed": [], "priority": [], "distance_influence": model.distance_influence}
     if include_baseline:
         out["priority"].append({"if": "!car_access", "multiply_by": "0"})
     for stmt in model.statements():
         if stmt.source is Source.BASELINE and not include_baseline:
+            continue
+        if isinstance(stmt.condition, HasTrafficCalming) and not extensions:
             continue
         if isinstance(stmt.condition, SegmentIs) and segment_mode == "area":
             seg = stmt.condition.segment_id
@@ -118,7 +135,29 @@ def to_graphhopper(model: CustomModel, edges: dict[str, EdgeMeta], include_basel
         out[stmt.target.value].append(statement_json(stmt, segment_mode))
     if features:
         out["areas"] = {"type": "FeatureCollection", "features": list(features.values())}
+    if include_baseline and profile is not None:
+        out["turn_penalty"] = turn_penalty_json(profile, extensions)
     return out
+
+
+def turn_penalty_json(profile: VehicleProfile, extensions: bool = False) -> list[dict]:
+    """Left/right turn costs by angle (U-turns use the profile's u_turn_costs in config.yml),
+    plus, with extensions, the wait at the point feature the previous segment ends at."""
+    right, left = ("change_angle", "-change_angle") if GH_RIGHT_TURN_IS_POSITIVE else ("-change_angle", "change_angle")
+    far, near = (right, left) if LEFT_HAND_TRAFFIC else (left, right)
+    lo, hi = int(STRAIGHT_MAX_DEG), int(U_TURN_MIN_DEG)
+    rules = [
+        {"if": f"{far} >= {lo} && {far} < {hi}", "add": _num(profile.turns.far_side)},
+        {"else_if": f"{near} >= {lo} && {near} < {hi}", "add": _num(profile.turns.near_side)},
+    ]
+    if extensions:
+        rules += [{"if": f"prev_{ev}", "add": _num(profile.point_delay_s[feature])}
+                  for feature, ev in POINT_FEATURE_EV.items() if profile.point_delay_s.get(feature)]
+    return rules
+
+
+def _num(v: float) -> str:
+    return str(int(v)) if float(v).is_integer() else str(v)
 
 
 def _feature(fid: str, ring: list[list[float]]) -> dict:
@@ -174,7 +213,8 @@ class GraphHopperRouter:
             "details": ["road_class", "average_speed"],
         }
 
-    def route(self, start: LatLon, end: LatLon, model: CustomModel) -> RouteResult | None:
+    def route(self, start: LatLon, end: LatLon, model: CustomModel, turns=None) -> RouteResult | None:
+        # Turn costs and restrictions live in the server profile (turn_costs + turn_penalty).
         body = json.dumps(self.request_body(start, end, model)).encode()
         req = urllib.request.Request(f"{self.base_url.rstrip('/')}/route", data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
@@ -192,3 +232,22 @@ class GraphHopperRouter:
             explanation=[],
             geometry=[(lat, lon) for lon, lat, *_ in p.get("points", {}).get("coordinates", [])],
         )
+
+
+def server_model(profile: VehicleProfile, extensions: bool = False) -> dict:
+    """The profile's custom_model_file for config.yml: baseline + turn penalties."""
+    from .rule_engine import baseline_model  # avoid an import cycle at module load
+    return to_graphhopper(baseline_model(profile), {}, include_baseline=True, profile=profile, extensions=extensions)
+
+
+def write_server_models(directory: str, extensions: bool = False) -> list[str]:
+    import os
+    from .vehicles import PROFILES
+    paths = []
+    for vehicle, profile in PROFILES.items():
+        path = os.path.join(directory, f"{vehicle.value}.json")
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(server_model(profile, extensions), f, indent=2)
+            f.write("\n")
+        paths.append(path)
+    return paths

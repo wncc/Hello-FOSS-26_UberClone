@@ -1,6 +1,6 @@
 # Routing: road hierarchy + telemetry overlays
 
-> For learning slower roads (traffic vs. road condition) and avoided roads, see [ROAD_LEARNING.md](ROAD_LEARNING.md). Speed limits, private roads, tolls and restricted zones: see [MAP_DATA.md](MAP_DATA.md). ETA approximation is tracked in [issue 001](issues/001-eta-approximation.md).
+> For learning slower roads (traffic vs. road condition) and avoided roads, see [ROAD_LEARNING.md](ROAD_LEARNING.md). Speed limits, private roads, tolls and restricted zones: see [MAP_DATA.md](MAP_DATA.md). Car / bike / auto profiles, turns, and fixed delays at signals and toll booths: see [VEHICLES_AND_TURNS.md](VEHICLES_AND_TURNS.md). Ride matching (driver ↔ rider), which uses this router for pickup ETAs: see [MATCHING.md](MATCHING.md). ETA approximation is tracked in [issue 001](issues/001-eta-approximation.md).
 
 ## 1. Overview
 
@@ -34,7 +34,7 @@ Scope: this package is only the routing function. Trip management, the GPS pipel
 
 The baseline also always contains the access rules: private, no-entry and delivery-only roads are blocked, and destination-only roads get ×0.1.
 
-Source of truth: [routing/road_classes.py](../routing/road_classes.py). The server copy is [deploy/graphhopper/car_hierarchy.json](../deploy/graphhopper/car_hierarchy.json), and a test fails if the two drift apart.
+Source of truth: [routing/road_classes.py](../routing/road_classes.py). The server copies are [deploy/graphhopper/](../deploy/graphhopper/)`<vehicle>.json`, generated with `routing.graphhopper.write_server_models()`, and a test fails if they drift apart.
 
 With equal speeds, one residential km costs **2×** one primary km (priority 0.5 vs 1.0). So the main road wins unless it is more than twice as long as the residential shortcut.
 
@@ -192,6 +192,6 @@ Covered by `python -m unittest discover -s tests -t .` ([test_routing.py](../tes
 - [x] Overlays with priority > 1, or telemetry priority 0, are rejected. An ops closure (0) blocks the edge.
 - [x] Shuffling the overlays gives the same edge evaluation. Duplicates keep the strictest value. Expired rules are dropped.
 - [x] The GraphHopper payload matches the documented format in both `expression` and `area` mode.
-- [x] The server `car_hierarchy.json` matches `BASE_PRIORITY`.
+- [x] The server model files (`car.json`, `bike.json`, `auto_rickshaw.json`) match the code.
 
 Still open before production: an integration test against a real GraphHopper instance with a regional OSM extract; the stable-segment-ID mapping from GraphHopper path details (`osm_way_id` or a custom encoded value); latency tests with 200 area overlays.

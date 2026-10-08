@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from .models import SegmentExposure
+from .vehicles import VehicleType
 
 
 def detect_exposures(planned: list[str], actual: list[str], trip_id: str, driver_id: str,
-                     observed_at: datetime) -> list[SegmentExposure]:
+                     observed_at: datetime, vehicle: VehicleType = VehicleType.CAR) -> list[SegmentExposure]:
     """Emit one exposure per planned segment the driver reached, up to the first deviation.
 
     Once a driver deviates the app reroutes, so the rest of the old plan is not
@@ -23,7 +24,7 @@ def detect_exposures(planned: list[str], actual: list[str], trip_id: str, driver
         followed = i < len(actual) and actual[i] == planned_seg
         if not followed and i >= len(actual):
             break  # trip ended/cancelled: not a deviation
-        events.append(SegmentExposure(planned_seg, driver_id, trip_id, followed, observed_at))
+        events.append(SegmentExposure(planned_seg, driver_id, trip_id, followed, observed_at, vehicle))
         if not followed:
             break
     return events

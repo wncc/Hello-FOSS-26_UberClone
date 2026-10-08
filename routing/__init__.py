@@ -4,8 +4,8 @@ Cost = Distance / (Speed x Priority). Baseline road-class priorities are always
 present; telemetry can only append penalties on top of them.
 """
 from .cost import edge_cost, route_cost, route_eta_s
-from .engine import LocalAStarRouter, RouterBackend, RoutingService
-from .graph import RoadGraph
+from .engine import LocalAStarRouter, MultiVehicleRouter, RouterBackend, RoutingService
+from .graph import RoadGraph, graph_from_edges
 from .graphhopper import GraphHopperRouter, to_graphhopper
 from .models import (
     CustomModel, EdgeMeta, InArea, Op, RestrictedZone, RoadAccess, RoadAccessIs, RoadClassIs, RouteResult,
@@ -19,6 +19,8 @@ from .rule_engine import CompiledModel, baseline_model, merge_models
 from .speed_model import FittedSpeedModel, SegmentKind, SpeedModelPolicy, fit_speed_model
 from .telemetry import TelemetryPolicy, aggregate, derive_rules, road_health
 from .time_buckets import IST, TimeBuckets
+from .turns import Turn, TurnModel, TurnRestrictions, classify_turn
+from .vehicles import AUTO, BIKE, CAR, PROFILES, VehicleProfile, VehicleType
 
 __all__ = [
     "BASE_PRIORITY", "UNIFORM_SPEED_KMH", "CompiledModel", "CustomModel", "EdgeMeta", "GraphHopperRouter",
@@ -31,4 +33,6 @@ __all__ = [
     "SegmentKind", "SpeedModelPolicy", "fit_speed_model", "IST", "TimeBuckets",
     "InArea", "RestrictedZone", "RoadAccess", "RoadAccessIs", "RouteOptions", "SpeedLimitSource",
     "Toll", "TollIs", "ZoneKind", "expected_speed_kmh",
+    "MultiVehicleRouter", "graph_from_edges", "Turn", "TurnModel", "TurnRestrictions", "classify_turn",
+    "AUTO", "BIKE", "CAR", "PROFILES", "VehicleProfile", "VehicleType",
 ]

@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Union
 
 from .road_classes import UNIFORM_SPEED_KMH, RoadClass
+from .vehicles import SPEED_BREAKER_FACTOR, VehicleType
 
 
 # --------------------------------------------------------------------------- #
@@ -37,7 +38,7 @@ class SpeedLimitSource(str, Enum):
     LEGAL_DEFAULT = "legal_default"  # national/state default for this kind of road
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)   # slots: a city has hundreds of thousands of these
 class EdgeMeta:
     """A directed road segment.
 
@@ -57,12 +58,20 @@ class EdgeMeta:
     max_speed_source: SpeedLimitSource | None = None
     road_access: RoadAccess = RoadAccess.YES
     toll: Toll = Toll.MISSING
-    # Time-of-week buckets in which cars may not use this road (from *:conditional tags).
+    # Time-of-week buckets in which this vehicle may not use the road (from *:conditional tags).
     no_access_buckets: frozenset[int] | None = None
+    # Fixed time lost at the node this segment ends at (traffic signal, toll booth, level
+    # crossing), in this direction of travel. Added as time; never lowers the road's priority.
+    end_delay_s: float = 0.0
+    end_features: frozenset[str] = frozenset()
+    traffic_calming: bool = False    # speed breaker on or at the end of this segment
 
 
-def expected_speed_kmh(max_speed_kmh: float | None, uniform_kmh: float = UNIFORM_SPEED_KMH) -> float:
-    return uniform_kmh if max_speed_kmh is None else min(uniform_kmh, max_speed_kmh)
+def expected_speed_kmh(max_speed_kmh: float | None, uniform_kmh: float = UNIFORM_SPEED_KMH,
+                       traffic_calming: bool = False) -> float:
+    """min(uniform speed, legal limit), slightly lower where there is a speed breaker."""
+    speed = uniform_kmh if max_speed_kmh is None else min(uniform_kmh, max_speed_kmh)
+    return speed * SPEED_BREAKER_FACTOR if traffic_calming else speed
 
 
 class ZoneKind(str, Enum):
@@ -101,8 +110,9 @@ class SpeedSample:
     segment_id: str
     driver_id: str
     trip_id: str
-    speed_kmh: float
+    speed_kmh: float  # length / traversal time, including any wait at the end node
     observed_at: datetime
+    vehicle: VehicleType = VehicleType.CAR
 
 
 @dataclass(frozen=True)
@@ -116,6 +126,7 @@ class SegmentExposure:
     trip_id: str
     followed: bool
     observed_at: datetime
+    vehicle: VehicleType = VehicleType.CAR
 
 
 # --------------------------------------------------------------------------- #
@@ -175,7 +186,12 @@ class InArea:
     zone_id: str
 
 
-Condition = Union[Always, RoadClassIs, SegmentIs, RoadAccessIs, TollIs, InArea]
+@dataclass(frozen=True)
+class HasTrafficCalming:
+    pass
+
+
+Condition = Union[Always, RoadClassIs, SegmentIs, RoadAccessIs, TollIs, InArea, HasTrafficCalming]
 
 # Symbolic speed values, resolved per edge (GraphHopper encoded value names).
 EDGE_AVERAGE_SPEED = "car_average_speed"   # map speed; unused while speeds are uniform
@@ -209,6 +225,9 @@ class CustomModel:
     distance_influence: float = 0.0
     # Polygons referenced by InArea conditions.
     areas: dict[str, RestrictedZone] = field(default_factory=dict)
+    # Optional precomputed zone -> segment ids (see rule_engine.zone_members); saves the local router
+    # from point-in-polygon tests on every edge. Not sent to GraphHopper.
+    area_members: dict[str, frozenset[str]] | None = None
 
     def statements(self) -> list[Statement]:
         return [*self.speed, *self.priority]
@@ -276,3 +295,5 @@ class RouteResult:
     explanation: list[EdgeEvaluation]
     geometry: list[tuple[float, float]] = field(default_factory=list)  # (lat, lon)
     toll_segments: list[str] = field(default_factory=list)
+    point_delay_s: float = 0.0   # signals, toll booths, level crossings (included in eta_s)
+    turn_s: float = 0.0          # turn costs (included in eta_s)

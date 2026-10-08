@@ -95,8 +95,8 @@ Why not let the speed model handle rush-hour avoidance? It's circular: if driver
 
 | Event | Fields | Notes |
 |---|---|---|
-| `SpeedSample` (one per full map-matched traversal) | segment_id, driver_id, trip_id, speed_kmh = segment length / traversal time, observed_at (UTC, timezone-aware) | **Leave out** partially driven first and last segments and time stopped at a pickup or drop-off. Include idle-to-pickup driving too: more coverage, same physics |
-| `SegmentExposure` | planned vs. actual segment lists → `detect_exposures()` | After a reroute, send the new plan as a new call |
+| `SpeedSample` (one per full map-matched traversal) | segment_id, driver_id, trip_id, speed_kmh = segment length / traversal time (**including** any wait at the end node; the router subtracts the expected signal / toll wait itself), observed_at (UTC, timezone-aware), vehicle | **Leave out** partially driven first and last segments and time stopped at a pickup or drop-off. Include idle-to-pickup driving too: more coverage, same physics |
+| `SegmentExposure` | planned vs. actual segment lists → `detect_exposures()`, vehicle | After a reroute, send the new plan as a new call |
 
 ## 4. Usage
 

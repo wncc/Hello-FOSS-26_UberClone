@@ -10,14 +10,16 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from typing import Iterable
 from datetime import datetime, timezone
 
 from .models import (
-    EDGE_AVERAGE_SPEED, MAX_SPEED, Always, CustomModel, EdgeEvaluation, EdgeMeta, InArea, Op,
-    RestrictedZone, RoadAccessIs, RoadClassIs, SegmentIs, Source, Statement, Target, TollIs,
+    EDGE_AVERAGE_SPEED, MAX_SPEED, Always, CustomModel, EdgeEvaluation, EdgeMeta, HasTrafficCalming, InArea,
+    Op, RestrictedZone, RoadAccessIs, RoadClassIs, SegmentIs, Source, Statement, Target, TollIs,
 )
 from .restrictions import access_statements
-from .road_classes import BASE_PRIORITY, UNIFORM_SPEED_KMH, RoadClass
+from .road_classes import RoadClass
+from .vehicles import CAR, SPEED_BREAKER_FACTOR, VehicleProfile
 
 SYMBOLIC_SPEEDS = (EDGE_AVERAGE_SPEED, MAX_SPEED)
 BLOCKING_SOURCES = (Source.BASELINE, Source.MAP, Source.OPS)
@@ -34,15 +36,17 @@ class RuleValidationError(ValueError):
 # Baseline
 # --------------------------------------------------------------------------- #
 
-def baseline_model(distance_influence: float = 0.0) -> CustomModel:
+def baseline_model(profile: VehicleProfile = CAR, distance_influence: float = 0.0) -> CustomModel:
     speed = [
-        Statement(Target.SPEED, Always(), Op.LIMIT_TO, UNIFORM_SPEED_KMH, Source.BASELINE, "base.speed"),
+        Statement(Target.SPEED, Always(), Op.LIMIT_TO, profile.uniform_speed_kmh, Source.BASELINE, "base.speed"),
         Statement(Target.SPEED, Always(), Op.LIMIT_TO, MAX_SPEED, Source.BASELINE, "base.speed_limit"),
+        Statement(Target.SPEED, HasTrafficCalming(), Op.MULTIPLY_BY, SPEED_BREAKER_FACTOR, Source.BASELINE,
+                  "base.speed_breaker"),
     ]
     priority = [
         Statement(Target.PRIORITY, RoadClassIs(rc), Op.MULTIPLY_BY, p,
                   Source.BASELINE, f"base.priority.{rc.value.lower()}")
-        for rc, p in BASE_PRIORITY.items() if p < 1.0
+        for rc, p in profile.priority.items() if p < 1.0
     ]
     priority += access_statements()
     return CustomModel(speed=speed, priority=priority, distance_influence=distance_influence)
@@ -127,6 +131,13 @@ class CompiledModel:
         self._by_segment: dict[tuple[Target, str], list[Statement]] = defaultdict(list)
         self._by_attr: dict[tuple[Target, object], list[Statement]] = defaultdict(list)
         self._by_area: dict[Target, list[Statement]] = defaultdict(list)
+        self._zones_of: dict[str, set[str]] | None = None
+        if model.area_members is not None:
+            self._zones_of = defaultdict(set)
+            for zone_id, segments in model.area_members.items():
+                for seg in segments:
+                    self._zones_of[seg].add(zone_id)
+        self._calming: dict[Target, list[Statement]] = defaultdict(list)
         for s in model.statements():
             c = s.condition
             if isinstance(c, Always):
@@ -139,22 +150,29 @@ class CompiledModel:
                 self._by_attr[(s.target, c.access)].append(s)
             elif isinstance(c, TollIs):
                 self._by_attr[(s.target, c.toll)].append(s)
+            elif isinstance(c, HasTrafficCalming):
+                self._calming[s.target].append(s)
             elif isinstance(c, InArea):
                 if c.zone_id not in model.areas:
                     raise RuleValidationError(f"{s.rule_id}: unknown area {c.zone_id}")
                 self._by_area[s.target].append(s)
 
     def _in_area(self, zone_id: str, edge: EdgeMeta) -> bool:
+        if self._zones_of is not None:
+            return zone_id in self._zones_of.get(edge.segment_id, ())
         zone = self.model.areas[zone_id]
         return any(zone.contains(p) for p in edge.geometry)
 
     def _matching(self, target: Target, edge: EdgeMeta) -> list[Statement]:
         seg = [s for s in self._by_segment.get((target, edge.segment_id), ())
                if s.condition.road_class in (None, edge.road_class)]
-        area = [s for s in self._by_area.get(target, ()) if self._in_area(s.condition.zone_id, edge)]
+        area_rules = self._by_area.get(target, ())
+        if area_rules and self._zones_of is not None and edge.segment_id not in self._zones_of:
+            area_rules = ()                              # fast path: edge is in no zone
+        area = [s for s in area_rules if self._in_area(s.condition.zone_id, edge)]
         return [*self._always.get(target, ()), *self._by_class.get((target, edge.road_class), ()),
                 *self._by_attr.get((target, edge.road_access), ()), *self._by_attr.get((target, edge.toll), ()),
-                *seg, *area]
+                *(self._calming.get(target, ()) if edge.traffic_calming else ()), *seg, *area]
 
     def evaluate(self, edge: EdgeMeta) -> EdgeEvaluation:
         applied: list[str] = []
@@ -181,3 +199,33 @@ class CompiledModel:
         if value == MAX_SPEED:
             return edge.max_speed_kmh if edge.max_speed_kmh is not None else math.inf
         return float(value)
+
+
+_ZONE_CELL_DEG = 0.01
+
+
+def zone_members(zones: Iterable[RestrictedZone], edges: Iterable[EdgeMeta]) -> dict[str, frozenset[str]]:
+    """Which segments touch each zone. Computed once per map (not per route), using a grid so
+    each zone only tests the roads near it."""
+    zones = list(zones)
+    if not zones:
+        return {}
+    cells: dict[tuple[int, int], list[EdgeMeta]] = defaultdict(list)
+    for e in edges:
+        for c in {(int(lat // _ZONE_CELL_DEG), int(lng // _ZONE_CELL_DEG)) for lat, lng in e.geometry}:
+            cells[c].append(e)
+    members: dict[str, frozenset[str]] = {}
+    for z in zones:
+        lats = [p[0] for p in z.polygon]
+        lngs = [p[1] for p in z.polygon]
+        lo_lat, hi_lat, lo_lng, hi_lng = min(lats), max(lats), min(lngs), max(lngs)
+        found: set[str] = set()
+        for i in range(int(lo_lat // _ZONE_CELL_DEG), int(hi_lat // _ZONE_CELL_DEG) + 1):
+            for j in range(int(lo_lng // _ZONE_CELL_DEG), int(hi_lng // _ZONE_CELL_DEG) + 1):
+                for e in cells.get((i, j), ()):
+                    if e.segment_id not in found and any(
+                            lo_lat <= lat <= hi_lat and lo_lng <= lng <= hi_lng and z.contains((lat, lng))
+                            for lat, lng in e.geometry):
+                        found.add(e.segment_id)
+        members[z.zone_id] = frozenset(found)
+    return members

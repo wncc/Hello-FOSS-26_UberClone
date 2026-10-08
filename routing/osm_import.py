@@ -1,11 +1,15 @@
-"""Build road metadata from OpenStreetMap: speed limits, access, tolls, time-based closures, zones.
+"""Build per-vehicle road metadata from OpenStreetMap.
+
+Extracts, for car / auto rickshaw / bike: speed limits, access, tolls, one-way,
+time-based closures, point delays (traffic signals, toll booths, level
+crossings), speed breakers, turn restrictions, and restricted zones.
 
 Input: an .osm or .osm.pbf extract of the operating city, e.g. from
 https://download.geofabrik.de/asia/india.html (clip to the city with `osmium extract`).
 The segment ids ("<way>:<from node>:<to node>") match what GraphHopper imports from
 the same file, so telemetry keyed on them lines up with routing.
 
-    python -m routing.osm_import city.osm.pbf --out roads.json [--city-cap 50]
+    python -m routing.osm_import region.osm.pbf --out roads.pkl --bbox 18.89,72.77,19.30,73.05 [--city-cap 50]
 
 Tag parsing is pure functions (tested without a file); the reader needs `pip install osmium`.
 """
@@ -13,8 +17,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import pickle
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable
 
@@ -22,8 +27,10 @@ from .graph import haversine_m
 from .models import (
     EdgeMeta, RestrictedZone, RoadAccess, SpeedLimitSource, Toll, ZoneKind, expected_speed_kmh,
 )
-from .road_classes import UNIFORM_SPEED_KMH, RoadClass
+from .road_classes import RoadClass
 from .time_buckets import HOURS, SATURDAY, SUNDAY, WEEKDAY
+from .turns import TurnRestrictions
+from .vehicles import CAR, INDIA_M1, PROFILES, LegalSpeedDefaults, VehicleProfile, VehicleType
 
 HIGHWAY_CLASS: dict[str, RoadClass] = {
     "motorway": RoadClass.MOTORWAY, "motorway_link": RoadClass.MOTORWAY,
@@ -46,36 +53,6 @@ WALK_KMH = 7.0
 # --------------------------------------------------------------------------- #
 # Speed limits
 # --------------------------------------------------------------------------- #
-
-@dataclass(frozen=True)
-class LegalSpeedDefaults:
-    """Limits that apply where no sign is mapped.
-
-    `city_cap_kmh` applies a city's own notification (usually lower than the
-    national maximum) to every non-expressway default. Signs are never capped.
-    """
-    country: str
-    motorway: float
-    divided_highway: float
-    other: float
-    zone_codes: dict[str, float] = field(default_factory=dict)  # "<CC>:<kind>" maxspeed values
-    city_cap_kmh: float | None = None
-
-    def default_for(self, road_class: RoadClass, divided: bool) -> float:
-        if road_class is RoadClass.MOTORWAY:
-            return self.motorway
-        limit = self.divided_highway if divided and road_class in (RoadClass.TRUNK, RoadClass.PRIMARY) else self.other
-        return min(limit, self.city_cap_kmh) if self.city_cap_kmh else limit
-
-
-# MoRTH S.O. 1522(E), 6 April 2018, category M1 (cars with <= 8 passenger seats):
-# expressways 120, four-lane-or-more divided highways 100, municipal and other roads 70.
-# Some secondary sources quote 60 for urban roads; confirm against the gazette and set
-# city_cap_kmh from the city traffic police notification (often 40-60 km/h).
-INDIA_M1 = LegalSpeedDefaults(
-    country="IN", motorway=120.0, divided_highway=100.0, other=70.0,
-    zone_codes={"motorway": 120.0, "trunk": 100.0, "urban": 70.0, "rural": 70.0},
-)
 
 _NUMBER = re.compile(r"^(\d+(?:\.\d+)?)\s*(mph|km/h|kmh|kph)?$")
 _ZONE = re.compile(r"^([A-Z]{2}):([a-z_]+?)(\d+)?$")
@@ -104,14 +81,24 @@ def _parse_one_maxspeed(v: str, legal: LegalSpeedDefaults) -> float | None:
 
 
 def maxspeed_for(tags: dict[str, str], direction: str, road_class: RoadClass, divided: bool,
-                 legal: LegalSpeedDefaults = INDIA_M1) -> tuple[float | None, SpeedLimitSource]:
+                 profile: VehicleProfile = CAR) -> tuple[float | None, SpeedLimitSource]:
+    """A vehicle-specific sign wins; a general sign applies to everyone but, for vehicles
+    with a lower category maximum (bikes, autos), never above that maximum."""
+    legal = profile.legal
+    for key in (f"maxspeed:{k}" for k in profile.osm_keys):
+        kmh = parse_maxspeed(tags[key], legal) if key in tags else None
+        if kmh is not None:
+            return kmh, SpeedLimitSource.SIGN
     for key in (f"maxspeed:{direction}", "maxspeed"):
-        if key in tags:
-            if tags[key] == "none":
-                return None, SpeedLimitSource.SIGN
-            kmh = parse_maxspeed(tags[key], legal)
-            if kmh is not None:
-                return kmh, SpeedLimitSource.SIGN
+        if key not in tags:
+            continue
+        kmh = None if tags[key] == "none" else parse_maxspeed(tags[key], legal)
+        if kmh is None and tags[key] != "none":
+            continue
+        if profile.cap_signs_at_category:
+            cap = legal.legal_max(road_class, divided)
+            kmh = cap if kmh is None else min(kmh, cap)
+        return kmh, SpeedLimitSource.SIGN
     return legal.default_for(road_class, divided), SpeedLimitSource.LEGAL_DEFAULT
 
 
@@ -129,7 +116,7 @@ def is_divided(tags: dict[str, str]) -> bool:
 # Access, oneway, toll
 # --------------------------------------------------------------------------- #
 
-ACCESS_KEYS = ("access", "vehicle", "motor_vehicle", "motorcar")   # least -> most specific
+GENERIC_ACCESS_KEYS = ("motor_vehicle", "vehicle", "access")   # most -> least specific
 ACCESS_VALUES: dict[str, RoadAccess] = {
     "yes": RoadAccess.YES, "permissive": RoadAccess.YES,
     "designated": RoadAccess.DESIGNATED,
@@ -140,21 +127,35 @@ ACCESS_VALUES: dict[str, RoadAccess] = {
     "no": RoadAccess.NO, "agricultural": RoadAccess.NO, "forestry": RoadAccess.NO,
     "military": RoadAccess.NO, "emergency": RoadAccess.NO, "restricted": RoadAccess.NO,
 }
+ACCESS_STRICTNESS = {RoadAccess.YES: 0, RoadAccess.DESIGNATED: 0, RoadAccess.DISCOURAGED: 1,
+                     RoadAccess.DESTINATION: 2, RoadAccess.DELIVERY: 3, RoadAccess.PRIVATE: 4, RoadAccess.NO: 5}
 BLOCKING_ACCESS = {"no", "private", "delivery", "agricultural", "forestry", "military", "emergency", "restricted"}
 
 
-def parse_access(tags: dict[str, str]) -> RoadAccess:
-    for key in reversed(ACCESS_KEYS):
-        access = ACCESS_VALUES.get(tags.get(key, ""))
-        if access is not None:
-            return access
-    return RoadAccess.YES
+def parse_access(tags: dict[str, str], profile: VehicleProfile = CAR) -> RoadAccess:
+    """Most specific key wins. Profiles with several keys (auto: motorcar + motorcycle)
+    take the strictest result."""
+    results = []
+    for specific in profile.osm_keys:
+        for key in (specific, *GENERIC_ACCESS_KEYS):
+            access = ACCESS_VALUES.get(tags.get(key, ""))
+            if access is not None:
+                results.append(access)
+                break
+        else:
+            results.append(RoadAccess.YES)
+    return max(results, key=ACCESS_STRICTNESS.__getitem__)
 
 
-def parse_toll(tags: dict[str, str]) -> Toll:
-    car = tags.get("toll:motorcar") or tags.get("toll")
-    if car in ("yes", "no"):
-        return Toll.ALL if car == "yes" else Toll.NO
+def parse_toll(tags: dict[str, str], profile: VehicleProfile = CAR) -> Toll:
+    specific = tags.get(f"toll:{profile.toll_key}") if profile.toll_key else None
+    if specific in ("yes", "no"):
+        return Toll.ALL if specific == "yes" else Toll.NO
+    generic = tags.get("toll")
+    if generic == "yes":
+        return Toll.ALL if profile.pays_toll else Toll.NO
+    if generic == "no":
+        return Toll.NO
     if tags.get("toll:hgv") == "yes":
         return Toll.HGV
     return Toll.MISSING
@@ -176,7 +177,6 @@ def parse_oneway(tags: dict[str, str], highway: str) -> int:
 # Time-based closures (*:conditional) -> time buckets
 # --------------------------------------------------------------------------- #
 
-CONDITIONAL_KEYS = ("motorcar:conditional", "motor_vehicle:conditional", "vehicle:conditional", "access:conditional")
 _DAYS = {"Mo": 0, "Tu": 1, "We": 2, "Th": 3, "Fr": 4, "Sa": 5, "Su": 6}
 _TIME_RANGE = re.compile(r"^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$")
 _DAY_TOKEN = re.compile(r"^(Mo|Tu|We|Th|Fr|Sa|Su)(?:-(Mo|Tu|We|Th|Fr|Sa|Su))?$")
@@ -186,14 +186,18 @@ class UnsupportedCondition(ValueError):
     pass
 
 
-def parse_conditional(tags: dict[str, str]) -> tuple[frozenset[int] | None, bool]:
-    """(buckets in which cars are blocked, parsed_ok). Most specific key wins.
+def conditional_keys(profile: VehicleProfile = CAR) -> tuple[str, ...]:
+    return tuple(f"{k}:conditional" for k in (*profile.osm_keys, *GENERIC_ACCESS_KEYS))
+
+
+def parse_conditional(tags: dict[str, str], profile: VehicleProfile = CAR) -> tuple[frozenset[int] | None, bool]:
+    """(buckets in which this vehicle is blocked, parsed_ok). Most specific key wins.
 
     Supports "no @ (Mo-Fr 07:00-11:00,17:00-21:00; Sa 10:00-14:00)". Anything
     else (dates, holidays, weight/wet conditions) is reported as not parsed and
     ignored, rather than guessed.
     """
-    key = next((k for k in CONDITIONAL_KEYS if k in tags), None)
+    key = next((k for k in conditional_keys(profile) if k in tags), None)
     if key is None:
         return None, True
     buckets: set[int] = set()
@@ -267,6 +271,40 @@ def _hours(token: str) -> set[int]:
 
 
 # --------------------------------------------------------------------------- #
+# Point features on nodes: signals, toll booths, level crossings, speed breakers
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class NodeInfo:
+    features: frozenset[str]          # keys of VehicleProfile.point_delay_s
+    signal_direction: str | None      # "forward" / "backward" relative to the way, None = both
+    traffic_calming: bool
+
+
+def node_info(tags: dict[str, str]) -> NodeInfo | None:
+    features = set()
+    if tags.get("highway") == "traffic_signals":
+        features.add("traffic_signals")
+    if tags.get("barrier") == "toll_booth":
+        features.add("toll_booth")
+    if tags.get("railway") == "level_crossing":
+        features.add("level_crossing")
+    calming = tags.get("traffic_calming", "no") != "no"
+    if not features and not calming:
+        return None
+    direction = tags.get("traffic_signals:direction") or tags.get("direction")
+    return NodeInfo(frozenset(features), direction if direction in ("forward", "backward") else None, calming)
+
+
+def _arrival_features(info: NodeInfo | None, direction: str) -> frozenset[str]:
+    if info is None:
+        return frozenset()
+    if "traffic_signals" in info.features and info.signal_direction not in (None, direction):
+        return info.features - {"traffic_signals"}
+    return info.features
+
+
+# --------------------------------------------------------------------------- #
 # Zones
 # --------------------------------------------------------------------------- #
 
@@ -277,82 +315,216 @@ def zone_kind(tags: dict[str, str]) -> ZoneKind | None:
 
 
 # --------------------------------------------------------------------------- #
-# Reader
+# Turn restrictions
 # --------------------------------------------------------------------------- #
 
-@dataclass
-class OsmExtract:
-    edges: dict[str, EdgeMeta]
-    zones: list[RestrictedZone]
-    stats: Counter
+@dataclass(frozen=True)
+class RawRestriction:
+    from_way: int
+    via_node: int
+    to_way: int
+    tags: dict[str, str]
+
+
+def restriction_for(tags: dict[str, str], profile: VehicleProfile) -> str | None:
+    """'no_right_turn', 'only_straight_on', ... for this vehicle, or None if it is exempt."""
+    for k in profile.osm_keys:
+        if f"restriction:{k}" in tags:
+            return tags[f"restriction:{k}"]
+    exempt = set(tags.get("except", "").replace(" ", "").split(";"))
+    if exempt and all(k in exempt for k in profile.osm_keys):
+        return None
+    return tags.get("restriction")
+
+
+def resolve_restrictions(raw: list[RawRestriction], edges: dict[str, EdgeMeta], profile: VehicleProfile,
+                         stats: Counter) -> TurnRestrictions:
+    arriving: dict[tuple[int, str], list[str]] = defaultdict(list)
+    leaving: dict[tuple[int, str], list[str]] = defaultdict(list)
+    for e in edges.values():
+        arriving[(e.osm_way_id, e.to_node)].append(e.segment_id)
+        leaving[(e.osm_way_id, e.from_node)].append(e.segment_id)
+
+    banned: set[tuple[str, str]] = set()
+    only: dict[str, frozenset[str]] = {}
+    for r in raw:
+        kind = restriction_for(r.tags, profile)
+        if not kind or not kind.startswith(("no_", "only_")):
+            continue
+        via = str(r.via_node)
+        ins, outs = arriving.get((r.from_way, via), []), leaving.get((r.to_way, via), [])
+        if not ins or not outs:
+            stats[f"{profile.vehicle.value}.turn_restriction.unresolved"] += 1
+            continue
+        stats[f"{profile.vehicle.value}.turn_restriction.{kind.split('_')[0]}"] += 1
+        for seg in ins:
+            if kind.startswith("no_"):
+                banned.update((seg, out) for out in outs)
+            else:
+                only[seg] = frozenset(outs)
+    return TurnRestrictions(frozenset(banned), only)
+
+
+# --------------------------------------------------------------------------- #
+# Edges
+# --------------------------------------------------------------------------- #
+
+UNROUTABLE_SERVICE = {"parking_aisle", "driveway", "drive-through", "emergency_access"}
+
+
+def is_routable(tags: dict[str, str]) -> bool:
+    return (tags.get("highway") in HIGHWAY_CLASS and tags.get("area") != "yes"
+            and tags.get("service") not in UNROUTABLE_SERVICE)
+
+
+def _pieces(seq: list[tuple[int, float, float]], split_at: set[int] | None) -> list[list[tuple[int, float, float]]]:
+    """Cut a way at junctions / point features; None cuts at every node."""
+    pieces, start = [], 0
+    for i in range(1, len(seq)):
+        if i == len(seq) - 1 or split_at is None or seq[i][0] in split_at:
+            pieces.append(seq[start:i + 1])
+            start = i
+    return pieces
 
 
 def build_edges(way_id: int, tags: dict[str, str], nodes: list[tuple[int, float, float]],
-                legal: LegalSpeedDefaults, uniform_kmh: float, stats: Counter) -> list[EdgeMeta]:
+                profile: VehicleProfile, nodes_info: dict[int, NodeInfo], stats: Counter,
+                split_at: set[int] | None = None) -> list[EdgeMeta]:
+    """Directed segments for one way. With `split_at` (junctions + feature nodes) a segment runs
+    from one such node to the next and keeps the full road shape; without it, every node pair
+    becomes a segment."""
     highway = tags.get("highway", "")
     road_class = HIGHWAY_CLASS.get(highway)
-    if road_class is None or tags.get("area") == "yes" or len(nodes) < 2:
+    if not is_routable(tags) or len(nodes) < 2:
         return []
-    access, toll = parse_access(tags), parse_toll(tags)
-    no_access, parsed = parse_conditional(tags)
+    v = profile.vehicle.value
+    access = parse_access(tags, profile)
+    if road_class is RoadClass.MOTORWAY and not profile.legal.motorway_permitted:
+        access = RoadAccess.NO
+    toll = parse_toll(tags, profile)
+    no_access, parsed = parse_conditional(tags, profile)
     divided = is_divided(tags)
     oneway = parse_oneway(tags, highway)
-    stats["ways"] += 1
-    stats[f"access.{access.value}"] += 1
-    stats[f"toll.{toll.value}"] += 1
+    way_calming = tags.get("traffic_calming", "no") != "no"
+    stats[f"{v}.access.{access.value}"] += 1
+    stats[f"{v}.toll.{toll.value}"] += 1
     if not parsed:
-        stats["conditional.unparsed"] += 1
+        stats[f"{v}.conditional.unparsed"] += 1
     elif no_access:
-        stats["conditional.parsed"] += 1
+        stats[f"{v}.conditional.parsed"] += 1
 
     directions = [("forward", nodes)] if oneway >= 0 else []
     if oneway <= 0:
         directions.append(("backward", nodes[::-1]))
     edges = []
     for direction, seq in directions:
-        max_speed, source = maxspeed_for(tags, direction, road_class, divided, legal)
-        stats[f"maxspeed.{source.value}"] += 1
-        for (a, alat, alon), (b, blat, blon) in zip(seq, seq[1:]):
+        max_speed, source = maxspeed_for(tags, direction, road_class, divided, profile)
+        stats[f"{v}.maxspeed.{source.value}"] += 1
+        for piece in _pieces(seq, split_at):
+            a, b = piece[0][0], piece[-1][0]
+            points = tuple((lat, lon) for _, lat, lon in piece)
+            info = nodes_info.get(b)
+            features = _arrival_features(info, direction)
+            calming = way_calming or bool(info and info.traffic_calming)
             edges.append(EdgeMeta(
                 segment_id=f"{way_id}:{a}:{b}", from_node=str(a), to_node=str(b), road_class=road_class,
-                distance_m=haversine_m((alat, alon), (blat, blon)),
-                speed_kmh=expected_speed_kmh(max_speed, uniform_kmh), osm_way_id=way_id,
-                geometry=((alat, alon), (blat, blon)), max_speed_kmh=max_speed, max_speed_source=source,
-                road_access=access, toll=toll, no_access_buckets=no_access))
-    stats["segments"] += len(edges)
+                distance_m=sum(haversine_m(p, q) for p, q in zip(points, points[1:])),
+                speed_kmh=expected_speed_kmh(max_speed, profile.uniform_speed_kmh, calming), osm_way_id=way_id,
+                geometry=points, max_speed_kmh=max_speed, max_speed_source=source,
+                road_access=access, toll=toll, no_access_buckets=no_access,
+                end_delay_s=sum(profile.point_delay_s.get(f, 0.0) for f in features),
+                end_features=features, traffic_calming=calming))
+    stats[f"{v}.segments"] += len(edges)
     return edges
 
 
-def extract(path: str, legal: LegalSpeedDefaults = INDIA_M1,
-            uniform_kmh: float = UNIFORM_SPEED_KMH) -> OsmExtract:
+# --------------------------------------------------------------------------- #
+# Reader
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class OsmExtract:
+    edges: dict[VehicleType, dict[str, EdgeMeta]]
+    zones: list[RestrictedZone]
+    turn_restrictions: dict[VehicleType, TurnRestrictions]
+    stats: Counter = field(default_factory=Counter)
+
+
+BBox = tuple[float, float, float, float]   # min_lat, min_lng, max_lat, max_lng
+READ_KEYS = ("highway", "barrier", "railway", "traffic_calming", "type", "landuse", "military")
+
+
+def extract(path: str, profiles: Iterable[VehicleProfile] = PROFILES.values(),
+            city_cap_kmh: float | None = None, bbox: BBox | None = None) -> OsmExtract:
+    """Read an OSM file. Untagged / irrelevant objects are dropped by osmium in C++, so only
+    the few objects that matter reach Python (a 220 MB regional extract reads in about a minute).
+    With `bbox`, roads touching the box are kept."""
     import osmium  # optional dependency: only needed to read files
 
-    edges: dict[str, EdgeMeta] = {}
+    profiles = [replace(p, legal=replace(p.legal, city_cap_kmh=city_cap_kmh)) if city_cap_kmh else p
+                for p in profiles]
     zones: list[RestrictedZone] = []
+    raw_restrictions: list[RawRestriction] = []
+    nodes_info: dict[int, NodeInfo] = {}
+    ways: list[tuple[int, dict[str, str], list[tuple[int, float, float]]]] = []
     stats: Counter = Counter()
 
-    class Handler(osmium.SimpleHandler):
-        def way(self, w):
-            tags = {t.k: t.v for t in w.tags}
-            if "highway" not in tags:
-                return
-            nodes = [(n.ref, n.location.lat, n.location.lon) for n in w.nodes if n.location.valid()]
-            for e in build_edges(w.id, tags, nodes, legal, uniform_kmh, stats):
-                edges[e.segment_id] = e
+    def inside(lat: float, lon: float) -> bool:
+        return bbox is None or (bbox[0] <= lat <= bbox[2] and bbox[1] <= lon <= bbox[3])
 
-        def area(self, a):
-            tags = {t.k: t.v for t in a.tags}
+    processor = (osmium.FileProcessor(path).with_locations().with_areas()
+                 .with_filter(osmium.filter.EmptyTagFilter())
+                 .with_filter(osmium.filter.KeyFilter(*READ_KEYS)))
+    for obj in processor:
+        tags = {t.k: t.v for t in obj.tags}
+        if obj.is_node():
+            info = node_info(tags)
+            if info and inside(obj.location.lat, obj.location.lon):
+                nodes_info[obj.id] = info
+                for f in info.features:
+                    stats[f"nodes.{f}"] += 1
+                stats["nodes.traffic_calming"] += info.traffic_calming
+        elif obj.is_way():
+            if not is_routable(tags):
+                continue
+            nodes = [(n.ref, n.location.lat, n.location.lon) for n in obj.nodes if n.location.valid()]
+            if len(nodes) >= 2 and any(inside(lat, lon) for _, lat, lon in nodes):
+                ways.append((obj.id, tags, nodes))
+        elif obj.is_relation():
+            if tags.get("type") != "restriction":
+                continue
+            roles = defaultdict(list)
+            for m in obj.members:
+                roles[(m.role, m.type)].append(m.ref)
+            frm, via, to = roles[("from", "w")], roles[("via", "n")], roles[("to", "w")]
+            if len(frm) == 1 and len(via) == 1 and len(to) == 1:
+                raw_restrictions.append(RawRestriction(frm[0], via[0], to[0], tags))
+            else:
+                stats["turn_restriction.unsupported"] += 1  # via-way or malformed
+        elif obj.is_area():
             kind = zone_kind(tags)
             if kind is None:
-                return
-            for ring in a.outer_rings():
+                continue
+            for ring in obj.outer_rings():
+                polygon = tuple((n.lat, n.lon) for n in ring)
+                if not any(inside(lat, lon) for lat, lon in polygon):
+                    continue
                 zones.append(RestrictedZone(
-                    zone_id=f"osm_{'w' if a.from_way() else 'r'}{a.orig_id()}_{len(zones)}", kind=kind,
-                    polygon=tuple((n.lat, n.lon) for n in ring), name=tags.get("name", ""), source="osm"))
+                    zone_id=f"osm_{'w' if obj.from_way() else 'r'}{obj.orig_id()}_{len(zones)}", kind=kind,
+                    polygon=polygon, name=tags.get("name", ""), source="osm"))
                 stats[f"zones.{kind.value}"] += 1
 
-    Handler().apply_file(path, locations=True)
-    return OsmExtract(edges, zones, stats)
+    # Segments run between junctions (nodes shared by several roads) and point features.
+    uses = Counter(ref for _, _, nodes in ways for ref, _, _ in nodes)
+    split_at = {ref for ref, n in uses.items() if n > 1} | set(nodes_info)
+    edges: dict[VehicleType, dict[str, EdgeMeta]] = {p.vehicle: {} for p in profiles}
+    for way_id, tags, nodes in ways:
+        stats["ways"] += 1
+        for p in profiles:
+            for e in build_edges(way_id, tags, nodes, p, nodes_info, stats, split_at):
+                edges[p.vehicle][e.segment_id] = e
+    restrictions = {p.vehicle: resolve_restrictions(raw_restrictions, edges[p.vehicle], p, stats) for p in profiles}
+    return OsmExtract(edges, zones, restrictions, stats)
 
 
 # --------------------------------------------------------------------------- #
@@ -362,12 +534,39 @@ def extract(path: str, legal: LegalSpeedDefaults = INDIA_M1,
 def _edge_json(e: EdgeMeta) -> dict:
     d = asdict(e)
     d["no_access_buckets"] = sorted(e.no_access_buckets) if e.no_access_buckets else None
+    d["end_features"] = sorted(e.end_features)
     return d
 
 
+def _edge_from_json(d: dict) -> EdgeMeta:
+    return EdgeMeta(**{
+        **d,
+        "road_class": RoadClass(d["road_class"]),
+        "geometry": tuple(map(tuple, d["geometry"])),
+        "road_access": RoadAccess(d["road_access"]),
+        "toll": Toll(d["toll"]),
+        "max_speed_source": SpeedLimitSource(d["max_speed_source"]) if d["max_speed_source"] else None,
+        "no_access_buckets": frozenset(d["no_access_buckets"]) if d["no_access_buckets"] else None,
+        "end_features": frozenset(d["end_features"]),
+    })
+
+
 def save(ex: OsmExtract, path: str) -> None:
+    """JSON (portable, readable) or, for paths ending in .pkl, a pickle that loads in seconds."""
+    if path.endswith(".pkl"):
+        with open(path, "wb") as f:
+            pickle.dump(ex, f, protocol=pickle.HIGHEST_PROTOCOL)
+        return
     payload = {
-        "edges": [_edge_json(e) for e in ex.edges.values()],
+        "vehicles": {
+            v.value: {
+                "edges": [_edge_json(e) for e in ex.edges[v].values()],
+                "turn_restrictions": {
+                    "banned": sorted(map(list, ex.turn_restrictions[v].banned)),
+                    "only": {k: sorted(outs) for k, outs in ex.turn_restrictions[v].only.items()},
+                },
+            } for v in ex.edges
+        },
         "zones": [{**asdict(z), "active_buckets": sorted(z.active_buckets) if z.active_buckets else None}
                   for z in ex.zones],
         "stats": dict(ex.stats),
@@ -376,21 +575,23 @@ def save(ex: OsmExtract, path: str) -> None:
         json.dump(payload, f)
 
 
-def load(path: str) -> tuple[dict[str, EdgeMeta], list[RestrictedZone]]:
+def load(path: str) -> OsmExtract:
+    if path.endswith(".pkl"):
+        with open(path, "rb") as f:
+            return pickle.load(f)   # only load files you created yourself with save()
     with open(path, encoding="utf-8") as f:
         payload = json.load(f)
-    edges = {}
-    for d in payload["edges"]:
-        e = EdgeMeta(**{**d, "geometry": tuple(map(tuple, d["geometry"]))})
-        e = replace(e, road_class=RoadClass(e.road_class), road_access=RoadAccess(e.road_access),
-                    toll=Toll(e.toll),
-                    max_speed_source=SpeedLimitSource(e.max_speed_source) if e.max_speed_source else None,
-                    no_access_buckets=frozenset(e.no_access_buckets) if e.no_access_buckets else None)
-        edges[e.segment_id] = e
+    edges, restrictions = {}, {}
+    for v, data in payload["vehicles"].items():
+        vehicle = VehicleType(v)
+        edges[vehicle] = {d["segment_id"]: _edge_from_json(d) for d in data["edges"]}
+        tr = data["turn_restrictions"]
+        restrictions[vehicle] = TurnRestrictions(frozenset(map(tuple, tr["banned"])),
+                                                 {k: frozenset(outs) for k, outs in tr["only"].items()})
     zones = [RestrictedZone(**{**z, "kind": ZoneKind(z["kind"]), "polygon": tuple(map(tuple, z["polygon"])),
                                "active_buckets": frozenset(z["active_buckets"]) if z["active_buckets"] else None})
              for z in payload["zones"]]
-    return edges, zones
+    return OsmExtract(edges, zones, restrictions, Counter(payload.get("stats", {})))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -399,11 +600,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", required=True)
     parser.add_argument("--city-cap", type=float, default=None,
                         help="city speed limit (km/h) applied to non-expressway legal defaults")
+    parser.add_argument("--bbox", type=lambda s: tuple(float(x) for x in s.split(",")), default=None,
+                        help="min_lat,min_lng,max_lat,max_lng: keep only roads touching this box")
     args = parser.parse_args(argv)
-    ex = extract(args.osm_file, replace(INDIA_M1, city_cap_kmh=args.city_cap))
+    ex = extract(args.osm_file, city_cap_kmh=args.city_cap, bbox=args.bbox)
     save(ex, args.out)
     for key, count in sorted(ex.stats.items()):
-        print(f"{key:32s} {count}")
+        print(f"{key:40s} {count}")
 
 
 if __name__ == "__main__":

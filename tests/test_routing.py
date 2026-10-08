@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from routing import (
-    EdgeMeta, LocalAStarRouter, Op, RoadClass, RoadClassIs, RoadGraph, RoutingService,
+    EdgeMeta, LocalAStarRouter, Op, RoadClass, RoadGraph, RoutingService,
     SegmentExposure, SegmentIs, Source, SpeedSample, Statement, Target, baseline_model,
     detect_exposures, merge_models, to_graphhopper,
 )
@@ -175,26 +175,27 @@ class IntegrationFormatTests(unittest.TestCase):
 
 
 class DeployConfigTests(unittest.TestCase):
-    def test_server_baseline_matches_code(self):
+    def test_server_models_match_code(self):
         import json
         from pathlib import Path
-        file = Path(__file__).parent.parent / "deploy" / "graphhopper" / "car_hierarchy.json"
+        from routing import PROFILES
+        from routing.graphhopper import server_model
+        for vehicle, profile in PROFILES.items():
+            with self.subTest(vehicle=vehicle):
+                file = Path(__file__).parent.parent / "deploy" / "graphhopper" / f"{vehicle.value}.json"
+                expected = json.loads(json.dumps(server_model(profile)))
+                self.assertEqual(json.loads(file.read_text()), expected,
+                                 "regenerate with routing.graphhopper.write_server_models('deploy/graphhopper')")
 
-        def norm(statements):
-            out = []
-            for st in statements:
-                (op, value), = ((k, v) for k, v in st.items() if k != "if")
-                try:
-                    value = float(value)
-                except ValueError:
-                    pass
-                out.append((st["if"], op, value))
-            return out
-
-        server = json.loads(file.read_text())
-        code = to_graphhopper(baseline_model(), {}, include_baseline=True)
-        for key in ("speed", "priority"):
-            self.assertEqual(norm(server[key]), norm(code[key]), key)
+    def test_config_u_turn_costs_match_profiles(self):
+        import re
+        from pathlib import Path
+        from routing import PROFILES
+        config = (Path(__file__).parent.parent / "deploy" / "graphhopper" / "config.yml").read_text()
+        for vehicle, profile in PROFILES.items():
+            m = re.search(rf"- name: {vehicle.value}\n\s+turn_costs: {{.*u_turn_costs: (\d+) }}", config)
+            self.assertIsNotNone(m, vehicle)
+            self.assertEqual(float(m.group(1)), profile.turns.u_turn)
 
 
 if __name__ == "__main__":

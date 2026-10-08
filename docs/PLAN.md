@@ -2,13 +2,15 @@
 
 **Decisions:** React Native (Expo) rider and driver apps · Python FastAPI backend · first version = the core ride loop · built in this repo.
 
-## 1. What exists today
+## 1. What existed when this plan was written
 
 | Piece | State |
 |---|---|
 | `routing/` | Route cost model (road hierarchy, telemetry learning, legal limits, access, tolls, zones, turns, point delays, car/auto/bike), OSM importer, GraphHopper adapter. 70+ tests |
 | `matching/` | Ride matching (ported from the Node engine, bugs fixed), using routing for pickup ETAs. 21 tests |
 | Everything else | Missing: users, auth, trips, pricing, payments, real-time, apps, admin, deployment |
+
+Since then the backend, rider and driver apps, and tests have been built (phases 1–3 below). For the current state see [OVERVIEW.md](OVERVIEW.md); for what's left see the [open issues](../README.md#open-issues).
 
 ## 2. Target architecture
 
@@ -88,7 +90,7 @@ docs/                           design docs + issues
 | Phase | Deliverable | Done when |
 |---|---|---|
 | **1. Backend core** ✅ done ([BACKEND.md](BACKEND.md)) | Auth (OTP, dev code), users, driver profile, online/location, fare estimate, ride request, matching loop, trip state machine, WebSocket events, cash payments, ratings, minimal admin | An automated test runs a full ride: rider books → driver pinged → accepts → arrives → PIN → completes → both rate |
-| **2. Rider app** ✅ core done ([mobile/README.md](../mobile/README.md)) | Login, map, pickup/drop search, estimates, book, searching, live tracking, PIN, trip, rating, history | Rider app completes a ride against a simulated driver |
+| **2. Rider app** ✅ core done ([mobile/README.md](../mobile/README.md)) | Login, map, pickup/drop by dragging the pin (search is [issue 012](issues/012-place-search.md)), estimates, book, searching, live tracking, PIN, trip, rating, history | Rider app completes a ride against a simulated driver |
 | **3. Driver app** ✅ core done (foreground GPS; push / background GPS pending) | Login, onboarding, go online, background GPS, ping with countdown, accept, navigate (deep link to Google Maps), PIN, complete, earnings | Both apps complete a ride on two phones |
 | **4. Payments** (deferred: cash only for now) | Razorpay orders, UPI / card, webhook verification, receipts, driver earnings ledger | Paid ride reconciles with a Razorpay test-mode webhook |
 | **5. Admin web** | Driver approval, live map, trips, fare config | Ops can approve a driver and watch a live trip |

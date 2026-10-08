@@ -1,5 +1,7 @@
 # How to run the project
 
+> **Want to contribute?** Open issues, from 🟢 good first issues to 🔴 hard ones, are listed in the [README](README.md#open-issues).
+
 All commands are for **Windows PowerShell**, from the repo folder (`D:\UberClone`) unless a step says `cd mobile`. Stop anything that's running with **Ctrl+C** in its window.
 
 **Pick your case:**

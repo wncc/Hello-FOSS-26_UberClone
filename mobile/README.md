@@ -20,8 +20,8 @@ The app reaches the backend on port 8000 of the computer serving the bundle. Ove
 **Only one phone?** The easiest way is `python demo.py` from the repo root: it starts the backend plus automatic drivers, and you just book and watch (see [docs/TESTING.md](../docs/TESTING.md)). To control a single simulated side yourself:
 
 ```bash
-python -m backend.tools.simulate driver --near 12.9716,77.5946 --vehicle auto_rickshaw   # test the rider app
-python -m backend.tools.simulate rider --pickup 12.9716,77.5946 --drop 12.9352,77.6245   # test the driver app
+python -m backend.tools.simulate driver --near 19.0178,72.8478 --vehicle auto_rickshaw   # test the rider app
+python -m backend.tools.simulate rider --pickup 19.0178,72.8478 --drop 19.0607,72.8636   # test the driver app
 ```
 
 The simulated driver must be near where you set the pickup, within 4 km.

@@ -5,3 +5,6 @@ __pycache__/
 data/
 e2e/.build/
 e2e/report/
+.venv/
+venv/
+.DS_Store

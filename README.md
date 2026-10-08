@@ -23,18 +23,38 @@ New here? Read the **[application overview](docs/OVERVIEW.md)** first.
 
 ## Quick start
 
-On Windows PowerShell, with Python 3.11+ and Node 20+ installed (full details for every situation in **[RUNNING.md](RUNNING.md)**):
+You need Python 3.11+, Node 20+ and Git. Full details for every situation are in **[RUNNING.md](RUNNING.md)**.
+
+**Windows (PowerShell):**
 
 ```powershell
+git clone https://github.com/aom12345/UberClone.git; cd UberClone
 python -m pip install -r requirements-dev.txt     # backend, routing, tests
 cd mobile; npm install; cd ..                      # apps
 ```
 
-Then build the Mumbai road data once (about 5 minutes; [RUNNING.md § A4](RUNNING.md#a-first-time-setup)), and:
+**macOS / Linux (Terminal):**
+
+```bash
+git clone https://github.com/aom12345/UberClone.git && cd UberClone
+python3 -m venv .venv && source .venv/bin/activate   # once; run `source .venv/bin/activate` in every new window
+python -m pip install -r requirements-dev.txt
+(cd mobile && npm install)
+```
+
+Then build the Mumbai road data once. It's a 221 MB download plus about 5 minutes, and without it routes are straight lines ([RUNNING.md § A4](RUNNING.md#a-first-time-setup)). On macOS / Linux, write `curl` instead of `curl.exe`:
 
 ```powershell
+mkdir data
+curl.exe -L -o data/western-zone-latest.osm.pbf https://download.geofabrik.de/asia/india/western-zone-latest.osm.pbf
+python -m routing.osm_import data/western-zone-latest.osm.pbf --out data/roads.pkl --bbox 18.89,72.77,19.30,73.05
+```
+
+Then, on any system:
+
+```bash
 python demo.py                          # window 1: backend + automatic cab, auto and bike drivers near Dadar
-cd mobile; npm run start:rider          # window 2: scan the QR code with Expo Go, book a ride, watch it happen
+cd mobile && npm run start:rider        # window 2: scan the QR code with Expo Go, book a ride, watch it happen
 python test_all.py                      # run every test; opens a report with screenshots
 ```
 
@@ -64,7 +84,7 @@ UberClone/
 
 ## Open issues
 
-Pick one and contribute. Each issue explains why it matters, what to do, which files to look at, and how to know you're done. The workflow is in [CONTRIBUTING.md](CONTRIBUTING.md).
+Pick one and contribute. Each issue explains why it matters, what to do, which files to look at, and how to know you're done. The workflow is in [CONTRIBUTING.md](CONTRIBUTING.md). Every issue is also on [GitHub Issues](https://github.com/aom12345/UberClone/issues) with the same number (003 here is #3 there): comment on it to claim it.
 
 ### 🟢 Good first issues (a few hours)
 

@@ -3,7 +3,7 @@
 ## One command for everything
 
 ```powershell
-cd D:\UberClone
+# from the repo folder (same on Windows, macOS and Linux)
 python test_all.py            # all checks + the browser ride test (~3-5 min), then opens the report
 python test_all.py --quick    # skip the browser ride (~20 s)
 ```
@@ -32,7 +32,7 @@ The browser test runs the same app code as the phone. The only browser-specific 
 ## Watching a ride on your phone (demo mode)
 
 ```powershell
-cd D:\UberClone
+# from the repo folder (same on Windows, macOS and Linux)
 python demo.py                          # backend + automatic cab, auto and bike drivers near Dadar
 python demo.py --near 19.0596,72.8295   # drivers near your own location
 ```

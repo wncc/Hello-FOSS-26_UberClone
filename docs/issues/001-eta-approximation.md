@@ -3,8 +3,6 @@
 **Status:** open, postponed · **Labels:** eta, routing, enhancement
 **Blocked by:** nothing. Postponed on purpose, so we can build learning of slow and avoided roads first.
 
-> This repo has no GitHub remote yet. Paste this file into a GitHub issue once one exists.
-
 ## Context
 
 Routing currently assumes **every road has the same speed** (`UNIFORM_SPEED_KMH` = 30 km/h, [routing/road_classes.py](../../routing/road_classes.py)), capped at the legal limit. Legal limits are already extracted for every road ([MAP_DATA.md](../MAP_DATA.md)): signs where mapped, national defaults otherwise. Use them as an upper bound for per-road speeds. Slower roads are learned only from telemetry ([docs/ROAD_LEARNING.md](../ROAD_LEARNING.md)). Until enough telemetry exists, ETAs are just `distance / 30 km/h`, which is wrong on fast arterials and at rush hour.

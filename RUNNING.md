@@ -2,7 +2,17 @@
 
 > **Want to contribute?** Open issues, from 🟢 good first issues to 🔴 hard ones, are listed in the [README](README.md#open-issues).
 
-All commands are for **Windows PowerShell**, from the repo folder (`D:\UberClone`) unless a step says `cd mobile`. Stop anything that's running with **Ctrl+C** in its window.
+Commands are run from the repo folder (e.g. `D:\UberClone`) unless a step says `cd mobile`. Stop anything that's running with **Ctrl+C** in its window.
+
+**Windows, macOS and Linux.** The commands are written for Windows PowerShell, but almost all of them are the same on macOS and Linux. Where they differ, a **macOS / Linux** version is given. In short:
+
+| Windows (PowerShell) | macOS / Linux (Terminal) |
+|---|---|
+| `python` | `python` inside the virtual environment from A2 (run `source .venv/bin/activate` in each new window) |
+| `curl.exe` | `curl` |
+| `data\roads.pkl` | `data/roads.pkl` (forward slashes work on Windows too) |
+| `$env:ROADS_PATH="none"; python …` | `ROADS_PATH=none python …` |
+| `ipconfig` (find the laptop's IP) | `ipconfig getifaddr en0` (macOS) or `hostname -I` (Linux) |
 
 **Pick your case:**
 
@@ -30,23 +40,38 @@ Do this once per laptop. On this laptop it's already done.
    python -m pip install -r requirements-dev.txt
    python -m playwright install chromium
    ```
+   **macOS / Linux:** create a virtual environment first. Homebrew and recent Linux versions refuse a plain `pip install` with "externally-managed-environment".
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate            # run this again in every new terminal window
+   python -m pip install -r requirements-dev.txt
+   python -m playwright install --with-deps chromium   # on macOS, --with-deps can be left out
+   ```
 3. **Install app packages:**
    ```powershell
    cd mobile
    npm install
    cd ..
    ```
-   If PowerShell says "running scripts is disabled", type `npm.cmd` instead of `npm` everywhere.
+   If PowerShell says "running scripts is disabled", type `npm.cmd` instead of `npm` everywhere. On macOS / Linux the same three lines work.
 4. **Build the Mumbai road data.** Routes follow real roads only if `data\roads.pkl` exists; without it they're straight lines. The file isn't in git (it's 173 MB), so each laptop builds it once: a 221 MB download plus about a 5-minute import.
    ```powershell
    mkdir data
    curl.exe -L -o data\western-zone-latest.osm.pbf https://download.geofabrik.de/asia/india/western-zone-latest.osm.pbf
    python -m routing.osm_import data\western-zone-latest.osm.pbf --out data\roads.pkl --bbox 18.89,72.77,19.30,73.05
    ```
+   **macOS / Linux:**
+   ```bash
+   mkdir -p data
+   curl -L -o data/western-zone-latest.osm.pbf https://download.geofabrik.de/asia/india/western-zone-latest.osm.pbf
+   python -m routing.osm_import data/western-zone-latest.osm.pbf --out data/roads.pkl --bbox 18.89,72.77,19.30,73.05
+   ```
 5. **Let your phone reach the laptop.** In Windows: **Settings → Network & internet → Wi-Fi → (your network) → Network profile type → Private**. Or run this once in an **Administrator** PowerShell:
    ```powershell
    New-NetFirewallRule -DisplayName "UberClone dev" -Direction Inbound -Protocol TCP -LocalPort 8000,8081,8082 -Action Allow
    ```
+   **macOS:** if a pop-up asks whether Python or Node may "accept incoming network connections", click **Allow**. If the firewall is on (**System Settings → Network → Firewall**) and the phone still can't connect, allow Python and Node there, or turn the firewall off while testing.
+   **Linux:** most desktops have no firewall on by default. With `ufw`, run `sudo ufw allow 8000,8081,8082/tcp`.
 6. **Install Expo Go** on your phone from the Play Store or App Store, and keep it updated. The app uses Expo SDK 57.
 
 The phone and laptop must be on the **same Wi-Fi**. College and office networks often block devices from talking to each other. If that happens, turn on your phone's hotspot and connect the laptop to it.
@@ -191,10 +216,11 @@ You don't need to close other windows for the tests; they use their own ports (8
    curl.exe -L -o data\southern-zone-latest.osm.pbf https://download.geofabrik.de/asia/india/southern-zone-latest.osm.pbf
    python -m routing.osm_import data\southern-zone-latest.osm.pbf --out data\roads.pkl --bbox 12.83,77.45,13.14,77.78
    ```
+   On macOS / Linux, use `curl` instead of `curl.exe`, and `/` instead of `\`.
 4. Restart the backend.
 5. For a better first view, change `DEFAULT_CENTER` in `mobile/src/lib/location.ts` and the default locations in `demo.py` and `backend/tools/simulate.py` to the new city.
 
-Only one city is loaded at a time. To run without road data (straight-line estimates), run `$env:ROADS_PATH="none"` in the same window before starting the backend.
+Only one city is loaded at a time. To run without road data (straight-line estimates), run `$env:ROADS_PATH="none"` in the same window before starting the backend. On macOS / Linux, start it with `ROADS_PATH=none python -m uvicorn …`.
 
 ---
 
@@ -202,7 +228,7 @@ Only one city is loaded at a time. To run without road data (straight-line estim
 
 All local data lives in one file: users, rides and ratings.
 1. Stop the backend.
-2. Delete `uberclone.db` in the repo folder.
+2. Delete `uberclone.db` in the repo folder (macOS / Linux: `rm uberclone.db`).
 3. Start the backend again; the tables are created automatically.
 
 On the phone, **Log out** clears the saved login.
@@ -213,7 +239,7 @@ On the phone, **Log out** clears the saved login.
 
 | Problem | Fix |
 |---|---|
-| App says "Can't reach the server at http://…:8000" | Backend not running, or the phone can't reach the laptop (step A5). Test by opening `http://<laptop-ip>:8000/health` in the phone's browser; `ipconfig` shows the laptop's IPv4 address. Still blocked? Use the phone hotspot |
+| App says "Can't reach the server at http://…:8000" | Backend not running, or the phone can't reach the laptop (step A5). Test by opening `http://<laptop-ip>:8000/health` in the phone's browser; `ipconfig` shows the laptop's IPv4 address (macOS: `ipconfig getifaddr en0`; Linux: `hostname -I`). Still blocked? Use the phone hotspot |
 | Routes are straight dashed lines | The backend has no road data: `data\roads.pkl` is missing (A4), or the backend was started before the file existed. Restart it and look for `road data ready` |
 | "No road route found … outside the area we have maps for" | Pickup or drop is outside the loaded city (Mumbai) |
 | "No drivers available right now" / ride never matched | The driver must be online with the app open, within 4 km, the same vehicle type, and must have sent GPS in the last minute |
@@ -224,6 +250,8 @@ On the phone, **Log out** clears the saved login.
 | Map stuck on Dadar, "Location permission is off" | Allow location for Expo Go in the phone's settings, turn GPS on, and tap **Retry** |
 | "This number is registered as a driver/rider" | Each number is one role; use a different number in the other app |
 | PowerShell: "running scripts is disabled" | Use `npm.cmd` instead of `npm` |
+| macOS / Linux: `pip` says "externally-managed-environment" | Use the virtual environment from A2, and run `source .venv/bin/activate` in every new window |
+| macOS / Linux: `python: command not found` | Activate the virtual environment (A2), or type `python3` |
 
 **Development-mode notes:**
 - **The login code is always `123456`**; no SMS is sent.

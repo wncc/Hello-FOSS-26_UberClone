@@ -1,7 +1,6 @@
 # Issue 002: GraphHopper import plugin for vehicles, point delays and speed breakers
 
 **Status:** open · **Labels:** graphhopper, routing, vehicles
-> This repo has no GitHub remote yet. Paste this file into a GitHub issue once one exists.
 
 ## Context
 

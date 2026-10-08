@@ -35,7 +35,10 @@ class _Grid:
 
 
 class RoadGraph:
-    def __init__(self, nodes: dict[str, tuple[float, float]], edges: list[EdgeMeta]):
+    def __init__(self, nodes: dict[str, tuple[float, float]], edges: list[EdgeMeta],
+                 blocked: set[str] | frozenset[str] = frozenset()):
+        """`blocked`: segment ids that are always impassable beyond their access tags
+        (e.g. inside no-entry zones); never snapped to, and not counted as connections."""
         self.nodes = nodes
         self.edges: dict[str, EdgeMeta] = {}
         self.out: dict[str, list[EdgeMeta]] = defaultdict(list)
@@ -47,7 +50,14 @@ class RoadGraph:
                 raise ValueError(f"edge {e.segment_id} references unknown node")
             self.edges[e.segment_id] = e
             self.out[e.from_node].append(e)
-            if e.road_class is RoadClass.MOTORWAY or e.road_access in _UNSNAPPABLE_ACCESS:
+        # Snap only into the main network: a road reachable only through private / blocked roads is
+        # an island a route can never reach (OSRM / GraphHopper drop such pieces too).
+        usable = [e for e in edges if e.road_access not in _UNSNAPPABLE_ACCESS and e.segment_id not in blocked]
+        self.main_nodes = main_component(nodes, usable)
+        for e in usable:
+            if e.road_class is RoadClass.MOTORWAY:
+                continue
+            if e.from_node not in self.main_nodes or e.to_node not in self.main_nodes:
                 continue
             if e.from_node not in seen_start:
                 seen_start.add(e.from_node)
@@ -80,7 +90,62 @@ class RoadGraph:
         return best
 
 
-def graph_from_edges(edges: Iterable[EdgeMeta]) -> RoadGraph:
+def _components(adj: dict[str, list[str]], radj: dict[str, list[str]], nodes: Iterable[str]) -> list[set[str]]:
+    """Strongly connected components (Kosaraju, iterative so city-size graphs don't hit the recursion limit)."""
+    order: list[str] = []
+    seen: set[str] = set()
+    for start in nodes:
+        if start in seen:
+            continue
+        seen.add(start)
+        stack = [(start, iter(adj.get(start, ())))]
+        while stack:
+            node, it = stack[-1]
+            nxt = next(it, None)
+            if nxt is None:
+                stack.pop()
+                order.append(node)
+            elif nxt not in seen:
+                seen.add(nxt)
+                stack.append((nxt, iter(adj.get(nxt, ()))))
+    assigned: set[str] = set()
+    comps: list[set[str]] = []
+    for start in reversed(order):
+        if start in assigned:
+            continue
+        comp, stack = set(), [start]
+        assigned.add(start)
+        while stack:
+            node = stack.pop()
+            comp.add(node)
+            for prev in radj.get(node, ()):
+                if prev not in assigned:
+                    assigned.add(prev)
+                    stack.append(prev)
+        comps.append(comp)
+    return comps
+
+
+def main_component(nodes: dict[str, tuple[float, float]], edges: list[EdgeMeta]) -> set[str]:
+    """Nodes of the largest strongly connected piece of the network (you can get there *and* back).
+    Tiny or one-way-only graphs (tests) have no dominant strongly connected piece; then the largest
+    weakly connected piece is used."""
+    adj: dict[str, list[str]] = defaultdict(list)
+    radj: dict[str, list[str]] = defaultdict(list)
+    for e in edges:
+        adj[e.from_node].append(e.to_node)
+        radj[e.to_node].append(e.from_node)
+    touched = set(adj) | set(radj)
+    if not touched:
+        return set()
+    strong = max(_components(adj, radj, touched), key=len)
+    if len(strong) * 2 >= len(touched):
+        return strong
+    undirected = {n: adj.get(n, []) + radj.get(n, []) for n in touched}
+    return max(_components(undirected, undirected, touched), key=len)
+
+
+def graph_from_edges(edges: Iterable[EdgeMeta], blocked: set[str] | frozenset[str] = frozenset()) -> RoadGraph:
     """Build a RoadGraph using each edge's end-point geometry as node coordinates."""
     edges = list(edges)
     nodes: dict[str, tuple[float, float]] = {}
@@ -88,4 +153,4 @@ def graph_from_edges(edges: Iterable[EdgeMeta]) -> RoadGraph:
         if len(e.geometry) >= 2:
             nodes.setdefault(e.from_node, e.geometry[0])
             nodes.setdefault(e.to_node, e.geometry[-1])
-    return RoadGraph(nodes, edges)
+    return RoadGraph(nodes, edges, blocked)

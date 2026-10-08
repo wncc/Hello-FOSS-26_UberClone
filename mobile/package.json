@@ -51,7 +51,7 @@
     "lint": "expo lint",
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "start:rider": "expo start",
+    "start:rider": "cross-env EXPO_PUBLIC_APP_VARIANT=rider expo start",
     "start:driver": "cross-env EXPO_PUBLIC_APP_VARIANT=driver expo start --port 8082"
   },
   "private": true,

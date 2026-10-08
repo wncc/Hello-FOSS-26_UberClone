@@ -13,6 +13,7 @@ import type { EstimateOption, LatLng, Place, VehicleType } from '@/lib/types';
 
 type Step = 'pickup' | 'drop' | 'choose';
 const SHEET_HEIGHT = 300;
+const CHOOSE_SHEET_HEIGHT = 440;   // three fare options + the book button
 
 export default function RiderHome() {
   const { api, user, signOut } = useSession();
@@ -109,7 +110,7 @@ export default function RiderHome() {
         pickup={step === 'pickup' ? null : pickup}
         drop={step === 'choose' ? drop : null}
         route={step === 'choose' ? options.find((o) => o.vehicle_type === selected)?.route : null}
-        bottomInset={SHEET_HEIGHT}
+        bottomInset={step === 'choose' ? CHOOSE_SHEET_HEIGHT : SHEET_HEIGHT}
       />
       <SafeAreaView edges={['top']} style={styles.topBar} pointerEvents="box-none">
         <Row style={{ justifyContent: 'space-between' }}>

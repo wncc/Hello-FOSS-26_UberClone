@@ -9,6 +9,11 @@ DEV_SECRET = "dev-only-secret-change-me-in-production-0123456789"
 DEFAULT_ROADS_PATH = os.path.join("data", "roads.pkl")
 
 
+def _roads_path() -> str | None:
+    value = os.environ.get("ROADS_PATH", DEFAULT_ROADS_PATH if os.path.exists(DEFAULT_ROADS_PATH) else "")
+    return None if value.strip().lower() in ("", "none", "off") else value
+
+
 def _bool(name: str, default: bool) -> bool:
     return os.environ.get(name, str(default)).lower() in ("1", "true", "yes")
 
@@ -32,9 +37,8 @@ class Settings:
         p.strip() for p in os.environ.get("ADMIN_PHONES", "").split(",") if p.strip()))
     search_timeout_seconds: int = 180          # no driver found -> ride becomes no_drivers
     location_stale_seconds: int = 60           # drivers silent for longer are not matched
-    # Road network from routing.osm_import. Defaults to data/roads.pkl when present; ROADS_PATH="" disables it.
-    roads_path: str | None = field(default_factory=lambda: os.environ.get(
-        "ROADS_PATH", DEFAULT_ROADS_PATH if os.path.exists(DEFAULT_ROADS_PATH) else "") or None)
+    # Road network from routing.osm_import. Defaults to data/roads.pkl when present; ROADS_PATH=none disables it.
+    roads_path: str | None = field(default_factory=lambda: _roads_path())
     city_timezone: str = "IST"
 
     @property

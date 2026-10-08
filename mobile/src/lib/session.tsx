@@ -1,9 +1,9 @@
-import * as SecureStore from 'expo-secure-store';
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Api, ApiError } from './api';
 import { APP_VARIANT, apiBaseUrl, wsUrl } from './config';
 import { RideSocket } from './socket';
+import { storage } from './storage';
 import type { ServerEvent, User } from './types';
 
 const ACCESS_KEY = 'auth.access';
@@ -44,20 +44,19 @@ class AuthCore {
   }
 
   async load(): Promise<void> {
-    [this.access, this.refreshToken] = await Promise.all([
-      SecureStore.getItemAsync(ACCESS_KEY), SecureStore.getItemAsync(REFRESH_KEY)]);
+    [this.access, this.refreshToken] = await Promise.all([storage.get(ACCESS_KEY), storage.get(REFRESH_KEY)]);
   }
 
   async store(access: string, refresh: string): Promise<void> {
     this.access = access;
     this.refreshToken = refresh;
-    await Promise.all([SecureStore.setItemAsync(ACCESS_KEY, access), SecureStore.setItemAsync(REFRESH_KEY, refresh)]);
+    await Promise.all([storage.set(ACCESS_KEY, access), storage.set(REFRESH_KEY, refresh)]);
   }
 
   async clear(): Promise<void> {
     this.socket.stop();
     this.access = this.refreshToken = null;
-    await Promise.all([SecureStore.deleteItemAsync(ACCESS_KEY), SecureStore.deleteItemAsync(REFRESH_KEY)]);
+    await Promise.all([storage.remove(ACCESS_KEY), storage.remove(REFRESH_KEY)]);
   }
 
   async refreshAccess(): Promise<string | null> {

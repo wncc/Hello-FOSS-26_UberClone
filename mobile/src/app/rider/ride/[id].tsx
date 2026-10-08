@@ -1,11 +1,12 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RideMap } from '@/components/RideMap';
 import { Body, Button, ErrorText, Loading, Row, Sheet, Title, colors, space } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, VEHICLE_LABEL, formatFare, isFinished, riderStatusText, shortAddress } from '@/lib/format';
+import { confirmAction } from '@/lib/dialogs';
 import { applyRiderEvent } from '@/lib/rideState';
 import { useServerEvents, useSession } from '@/lib/session';
 import { useRideRoute } from '@/lib/useRideRoute';
@@ -37,21 +38,16 @@ export default function RiderRide() {
   });
 
   function cancel() {
-    Alert.alert('Cancel ride?', 'Your driver may already be on the way.', [
-      { text: 'Keep ride', style: 'cancel' },
-      {
-        text: 'Cancel ride', style: 'destructive', onPress: async () => {
-          setBusy(true);
-          try {
-            setRide(await api.cancel(id, 'cancelled by rider'));
-          } catch (e) {
-            setError(e instanceof ApiError ? e.message : 'Could not cancel');
-          } finally {
-            setBusy(false);
-          }
-        },
-      },
-    ]);
+    confirmAction('Cancel ride?', 'Your driver may already be on the way.', 'Cancel ride', async () => {
+      setBusy(true);
+      try {
+        setRide(await api.cancel(id, 'cancelled by rider'));
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Could not cancel');
+      } finally {
+        setBusy(false);
+      }
+    });
   }
 
   if (!ride) return error ? <View style={styles.center}><ErrorText message={error} /></View> : <Loading />;

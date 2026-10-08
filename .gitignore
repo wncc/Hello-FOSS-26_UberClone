@@ -3,3 +3,5 @@ __pycache__/
 *.db
 .pytest_cache/
 data/
+e2e/.build/
+e2e/report/

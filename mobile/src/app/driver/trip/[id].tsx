@@ -1,10 +1,11 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RideMap } from '@/components/RideMap';
 import { Body, Button, ErrorText, Input, Loading, Row, Sheet, Title, colors, space } from '@/components/ui';
 import { ApiError } from '@/lib/api';
+import { confirmAction, notify } from '@/lib/dialogs';
 import { directionsUrl, formatFare, shortAddress } from '@/lib/format';
 import { useDriverLocationReporter } from '@/lib/location';
 import { useServerEvents, useSession } from '@/lib/session';
@@ -30,7 +31,7 @@ export default function DriverTrip() {
 
   useServerEvents((e) => {
     if (e.event === 'ride:cancelled' && e.data.ride_id === id) {
-      Alert.alert('Ride cancelled', 'The rider cancelled this ride.');
+      notify('Ride cancelled', 'The rider cancelled this ride.');
       router.replace('/driver');
     }
   });
@@ -48,19 +49,14 @@ export default function DriverTrip() {
   }
 
   function cancel() {
-    Alert.alert('Cancel this ride?', 'The rider will be matched with another driver.', [
-      { text: 'Keep ride', style: 'cancel' },
-      {
-        text: 'Cancel ride', style: 'destructive', onPress: async () => {
-          try {
-            await api.cancel(id, 'cancelled by driver');
-            router.replace('/driver');
-          } catch (e) {
-            setError(e instanceof ApiError ? e.message : 'Could not cancel');
-          }
-        },
-      },
-    ]);
+    confirmAction('Cancel this ride?', 'The rider will be matched with another driver.', 'Cancel ride', async () => {
+      try {
+        await api.cancel(id, 'cancelled by driver');
+        router.replace('/driver');
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Could not cancel');
+      }
+    });
   }
 
   if (!ride) return error ? <View style={styles.center}><ErrorText message={error} /></View> : <Loading />;

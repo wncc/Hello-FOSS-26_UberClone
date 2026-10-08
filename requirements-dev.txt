@@ -1,0 +1,6 @@
+# Everything needed to run and test the project on a development machine:
+#   python -m pip install -r requirements-dev.txt
+#   python -m playwright install chromium        (browser for the end-to-end test)
+-r requirements.txt
+-r backend/requirements.txt
+playwright>=1.45

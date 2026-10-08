@@ -67,7 +67,7 @@ def run_driver(args) -> None:
     active = c.call("GET", "/rides/active")
     if active:                                                   # resume a trip left over from a previous run
         print(f"resuming ride {active['id']} ({active['status']})")
-        here = do_trip(c, active, here, args.speed)
+        here = do_trip(c, active, here, args.speed, args.auto_pin)
 
     last_beat = 0.0
     try:
@@ -81,7 +81,7 @@ def run_driver(args) -> None:
                 c.call("POST", f"/rides/{offer['ride_id']}/accept", ok=(202, 409))
                 ride = wait_for_assignment(c, offer["ride_id"])
                 if ride:
-                    here = do_trip(c, ride, here, args.speed)
+                    here = do_trip(c, ride, here, args.speed, args.auto_pin)
             time.sleep(1)
     except KeyboardInterrupt:
         c.call("POST", "/drivers/me/online", {"online": False}, ok=(200, 409))
@@ -100,7 +100,7 @@ def wait_for_assignment(c: Client, ride_id: str, timeout: float = 15) -> dict | 
     return None
 
 
-def do_trip(c: Client, ride: dict, here: tuple[float, float], speed: float) -> tuple[float, float]:
+def do_trip(c: Client, ride: dict, here: tuple[float, float], speed: float, auto_pin: bool = False) -> tuple[float, float]:
     pickup = (ride["pickup"]["lat"], ride["pickup"]["lng"])
     drop = (ride["drop"]["lat"], ride["drop"]["lng"])
     if ride["status"] == "driver_assigned":
@@ -111,7 +111,12 @@ def do_trip(c: Client, ride: dict, here: tuple[float, float], speed: float) -> t
             return pickup
         c.call("POST", f"/rides/{ride['id']}/arrived")
     while c.call("GET", f"/rides/{ride['id']}")["status"] == "driver_arrived":
-        pin = input("arrived. Enter the PIN shown in the rider app: ").strip()
+        if auto_pin:
+            time.sleep(3)                       # give the person watching the rider app a moment
+            pin = c.call("GET", f"/dev/rides/{ride['id']}/pin")["pin"]
+            print(f"arrived. Starting with PIN {pin} (--auto-pin)")
+        else:
+            pin = input("arrived. Enter the PIN shown in the rider app: ").strip()
         try:
             c.call("POST", f"/rides/{ride['id']}/start", {"pin": pin})
             break
@@ -158,6 +163,7 @@ def main() -> None:
     d.add_argument("--near", type=latlng, default=(19.0178, 72.8478))           # Dadar
     d.add_argument("--vehicle", default="car", choices=["car", "auto_rickshaw", "bike"])
     d.add_argument("--speed", type=float, default=1.0, help="simulation speed-up")
+    d.add_argument("--auto-pin", action="store_true", help="start the trip without typing the PIN (demo mode)")
     r = sub.add_parser("rider")
     r.add_argument("--phone", default="9000000201")
     r.add_argument("--pickup", type=latlng, default=(19.0178, 72.8478))         # Dadar

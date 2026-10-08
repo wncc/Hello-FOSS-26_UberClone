@@ -12,7 +12,7 @@ python -m pytest                                # all tests (routing, matching, 
 
 | Env var | Default | Notes |
 |---|---|---|
-| `ROADS_PATH` | `data/roads.pkl` if present | Road network for routing; `ROADS_PATH=` (empty) turns it off |
+| `ROADS_PATH` | `data/roads.pkl` if present | Road network for routing; `ROADS_PATH=none` turns it off |
 | `APP_ENV` | `dev` | `dev` / `test`: fixed OTP, tables auto-created, `/dev/dispatch/tick` enabled. Anything else = production rules |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./uberclone.db` | Production: `postgresql+asyncpg://...` |
 | `JWT_SECRET` | dev value | **Required** outside dev / test (startup fails without it) |

@@ -18,6 +18,7 @@ from .context import AppContext
 from .db import Database
 from .deps import get_ctx
 from .errors import DomainError
+from .models import Ride
 from .services.dispatch import Dispatcher
 from .services.realtime import Hub
 from .services.routes import RouteService, load_route_service
@@ -68,6 +69,17 @@ def create_app(settings: Settings | None = None, routes: RouteService | None = N
         if not c.settings.is_dev:
             raise HTTPException(404)
         return await dispatcher.tick()
+
+    @app.get("/dev/rides/{ride_id}/pin", tags=["dev"])
+    async def dev_ride_pin(ride_id: str, c: AppContext = Depends(get_ctx)) -> dict:
+        """The ride PIN, so the simulated driver can run a demo without typing (dev/test only)."""
+        if not c.settings.is_dev:
+            raise HTTPException(404)
+        async with c.db.sessions() as session:
+            ride = await session.get(Ride, ride_id)
+            if ride is None:
+                raise HTTPException(404)
+            return {"pin": ride.pin}
 
     return app
 

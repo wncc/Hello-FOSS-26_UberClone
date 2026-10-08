@@ -67,6 +67,9 @@ function createRideMap(L, el, post, opts) {
     if (key) layers[name] = L.polyline(pts, style).addTo(map);
   }
 
+  // The map's box changes size (e.g. picking mode -> route display); Leaflet must re-measure.
+  window.addEventListener('resize', function () { map.invalidateSize(); });
+
   map.on('moveend', function () {
     if (!picking) return;
     var c = map.getCenter();
@@ -74,6 +77,7 @@ function createRideMap(L, el, post, opts) {
   });
 
   function update(s) {
+    map.invalidateSize();
     picking = !!s.picking;
     setPoint('pickup', s.pickup);
     setPoint('drop', s.drop);
@@ -94,7 +98,9 @@ function createRideMap(L, el, post, opts) {
       lastFit = s.fitKey;
       var pts = [s.pickup, s.drop, s.driver].filter(Boolean).map(function (p) { return [p.lat, p.lng]; })
         .concat(hasRoute ? s.route : [], s.approach || []);
-      if (pts.length > 1) map.fitBounds(pts, { padding: [60, 60], maxZoom: 17 });
+      // Keep everything clear of the bottom panel, which covers the lower part of the map.
+      var bottom = (s.coveredBottom || 0) + 40;
+      if (pts.length > 1) map.fitBounds(pts, { paddingTopLeft: [40, 90], paddingBottomRight: [40, bottom], maxZoom: 17 });
       else if (pts.length === 1) map.setView(pts[0], Math.max(map.getZoom(), 15));
     }
   }
@@ -126,7 +132,11 @@ export function mapHtml(options: MapOptions): string {
 <script>
 ${MAP_SCRIPT}
 (function () {
-  function post(m) { window.ReactNativeWebView.postMessage(JSON.stringify(m)); }
+  function post(m) {
+    var s = JSON.stringify(m);
+    if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(s);
+    else window.parent.postMessage(s, '*');   // browser build: the map is an iframe
+  }
   if (!window.L) { post({ type: 'error', message: 'Could not load the map (check the internet connection)' }); return; }
   try {
     window.rideMap = createRideMap(window.L, document.getElementById('map'), post, ${opts});
@@ -153,6 +163,8 @@ export interface MapState {
   me: { lat: number; lng: number } | null;
   recenter: { lat: number; lng: number; key: string } | null;
   fitKey: string;
+  /** Pixels at the bottom of the map hidden behind the panel (display mode). */
+  coveredBottom?: number;
 }
 
 export type MapMessage =

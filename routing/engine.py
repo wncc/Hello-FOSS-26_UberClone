@@ -12,7 +12,7 @@ from .cost import edge_cost, moving_speed_kmh, route_time_breakdown
 from .graph import RoadGraph, graph_from_edges, haversine_m
 from .models import (
     CustomModel, EdgeEvaluation, EdgeMeta, RestrictedZone, RoadHealth, RouteResult, SegmentExposure,
-    SpeedSample, Statement,
+    SpeedSample, Statement, ZoneKind,
 )
 from .restrictions import RouteOptions, conditional_statements, has_toll, request_statements, zone_statements
 from .rule_engine import CompiledModel, baseline_model, merge_models, zone_members
@@ -234,8 +234,10 @@ class MultiVehicleRouter:
         # Every vehicle has the same road geometry, so zone membership is computed once.
         any_edges = next(iter(extract.edges.values()), {})
         members = zone_members(extract.zones, any_edges.values())
+        always_blocked = frozenset().union(*(members[z.zone_id] for z in extract.zones
+                                             if z.kind is ZoneKind.NO_ENTRY and not z.active_buckets))
         return cls({
-            v: RoutingService(LocalAStarRouter(graph_from_edges(edges.values())), edges, buckets=buckets,
+            v: RoutingService(LocalAStarRouter(graph_from_edges(edges.values(), always_blocked)), edges, buckets=buckets,
                               zones=extract.zones, profile=PROFILES[v],
                               turn_restrictions=extract.turn_restrictions[v], area_members=members, **kw)
             for v, edges in extract.edges.items()

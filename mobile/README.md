@@ -17,7 +17,7 @@ The app reaches the backend on port 8000 of the computer serving the bundle. Ove
 
 **Logging in (development):** any Indian mobile number works. The backend is in dev mode, so the code is `123456` and the app fills it in for you. A phone number is either a rider or a driver, so use different numbers in the two apps.
 
-**Only one phone?** Simulate the other side from the repo root:
+**Only one phone?** The easiest way is `python demo.py` from the repo root: it starts the backend plus automatic drivers, and you just book and watch (see [docs/TESTING.md](../docs/TESTING.md)). To control a single simulated side yourself:
 
 ```bash
 python -m backend.tools.simulate driver --near 12.9716,77.5946 --vehicle auto_rickshaw   # test the rider app

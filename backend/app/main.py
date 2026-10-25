@@ -21,6 +21,7 @@ from .errors import DomainError
 from .models import Ride
 from .services.dispatch import Dispatcher
 from .services.realtime import Hub
+from .services.gps_learning import restore_delay_models
 from .services.routes import RouteService, load_route_service
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,15 @@ def create_app(settings: Settings | None = None, routes: RouteService | None = N
             ctx.routes = await asyncio.to_thread(load_route_service, settings.roads_path)
         if settings.is_dev:
             await ctx.db.create_all()
+
+        if ctx.routes.router is not None:
+            try:
+                await restore_delay_models(ctx)
+            except Exception:
+                # A missing production schema must be fixed with a DB migration.
+                # Keep the API available, but make the problem visible in logs.
+                log.exception("Could not restore GPS delay models at startup")
+
         if settings.run_matching_loop:
             dispatcher.start()
         yield

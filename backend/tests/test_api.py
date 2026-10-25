@@ -73,6 +73,36 @@ def test_full_ride_lifecycle(client):
     assert near.post("/drivers/me/online", {"online": False}).status_code == 200
 
 
+def test_ride_completion_survives_gps_learning_failure(client, monkeypatch):
+    from backend.app.services import rides as ride_service
+
+    def fail_learning(*args, **kwargs):
+        raise RuntimeError("simulated GPS learning failure")
+
+    monkeypatch.setattr(
+        ride_service, "learn_from_completed_ride", fail_learning
+    )
+
+    r = rider(client)
+    d = driver(client, 12.9726, 77.5946)
+    ride = book(r)
+
+    tick(client)
+    assert d.post(f"/rides/{ride['id']}/accept").status_code == 202
+    tick(client)
+    assert d.post(f"/rides/{ride['id']}/arrived").json()["status"] == "driver_arrived"
+    assert d.post(
+        f"/rides/{ride['id']}/start", {"pin": ride["pin"]}
+    ).json()["status"] == "in_progress"
+
+    response = d.post(f"/rides/{ride['id']}/complete")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "completed"
+    assert r.events("ride:completed")
+    assert d.events("ride:completed")
+
+
 # --------------------------------------------------------------------------- #
 # Matching edge cases
 # --------------------------------------------------------------------------- #

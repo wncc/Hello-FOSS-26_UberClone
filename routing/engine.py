@@ -5,10 +5,10 @@ import heapq
 import itertools
 import math
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-from .cost import edge_cost, moving_speed_kmh, route_time_breakdown
+from .cost import edge_cost, moving_speed_kmh, point_delay_s, route_time_breakdown
 from .graph import RoadGraph, graph_from_edges, haversine_m
 from .models import (
     CustomModel, EdgeEvaluation, EdgeMeta, RestrictedZone, RoadHealth, RouteResult, SegmentExposure,
@@ -21,6 +21,9 @@ from .telemetry import DEFAULT_POLICY, TelemetryPolicy, aggregate, derive_rules
 from .time_buckets import TimeBuckets
 from .turns import NO_RESTRICTIONS, TurnModel, TurnRestrictions
 from .vehicles import CAR, PROFILES, VehicleProfile, VehicleType
+from .delay_model import DelayObservation, FittedDelayModel, fit_delay_model
+from .delay_extraction import extract_delay_observations
+from .map_matching import GPSObservation
 
 LatLon = tuple[float, float]
 
@@ -42,18 +45,30 @@ class LocalAStarRouter:
     def __init__(self, graph: RoadGraph):
         self.graph = graph
 
-    def route(self, start: LatLon, end: LatLon, model: CustomModel,
-              turns: TurnModel | None = None) -> RouteResult | None:
+    def route(
+        self,
+        start: LatLon,
+        end: LatLon,
+        model: CustomModel,
+        turns: TurnModel | None = None,
+        depart_at: datetime | None = None,
+        learned: FittedDelayModel | None = None,
+    ) -> RouteResult | None:
+        depart_at = depart_at or datetime.now(timezone.utc)
         g = self.graph
         compiled = CompiledModel(model)
         src, dst = g.nearest_node(start, "start"), g.nearest_node(end, "end")
+
         if src is None or dst is None:
-            return None              # outside the mapped area
+            return None
         if src == dst:
             return RouteResult([], [src], 0.0, 0.0, 0.0, [])
+
         goal = g.nodes[dst]
+
         # Admissible: overlays never raise speed above expected speed nor priority above 1,
         # and waits / turn costs are >= 0.
+
         vmax_mps = g.max_speed_kmh / 3.6
         di = model.distance_influence
 
@@ -63,62 +78,153 @@ class LocalAStarRouter:
 
         evals: dict[str, EdgeEvaluation] = {}
 
-        def segment_cost(edge: EdgeMeta) -> float:
+        def segment_cost(edge: EdgeMeta, when: datetime) -> float:
             ev = evals.get(edge.segment_id)
             if ev is None:
                 ev = evals[edge.segment_id] = compiled.evaluate(edge)
-            c = edge_cost(edge.distance_m, ev.speed_kmh, ev.priority, di)
+
+            cost = edge_cost(edge.distance_m, ev.speed_kmh, ev.priority, di)
+
             # The trip ends at dst without crossing it, so its signal / toll wait does not apply.
-            return c if edge.to_node == dst else c + edge.end_delay_s
+
+            if edge.to_node != dst:
+                travel = edge.distance_m / (ev.speed_kmh / 3.6) if ev.speed_kmh > 0 else math.inf
+                if math.isfinite(travel):
+                    cost += point_delay_s(
+                        edge,
+                        when + timedelta(seconds=travel),
+                        learned,
+                    )
+            return cost
 
         best: dict[str, float] = {}
         parent: dict[str, str | None] = {}
+        elapsed: dict[str, float] = {}
         tie = itertools.count()
         heap: list[tuple[float, int, str]] = []
+
         for edge in g.out.get(src, ()):
-            c = segment_cost(edge)
-            if not math.isinf(c) and c < best.get(edge.segment_id, math.inf):
-                best[edge.segment_id], parent[edge.segment_id] = c, None
-                heapq.heappush(heap, (c + heuristic(edge.to_node), next(tie), edge.segment_id))
+            cost = segment_cost(edge, depart_at)
+            if math.isfinite(cost):
+                best[edge.segment_id] = cost
+                ev = evals[edge.segment_id]
+                travel_s = edge.distance_m / (ev.speed_kmh / 3.6)
+
+                wait_s = (
+                    point_delay_s(
+                        edge,
+                        depart_at + timedelta(seconds=travel_s),
+                        learned,
+                    )
+                    if edge.to_node != dst
+                    else 0.0
+                )
+
+                elapsed[edge.segment_id] = travel_s + wait_s
+                parent[edge.segment_id] = None
+                heapq.heappush(
+                    heap,
+                    (cost + heuristic(edge.to_node), next(tie), edge.segment_id),
+                )
 
         closed: set[str] = set()
+
         while heap:
             _, _, seg = heapq.heappop(heap)
             if seg in closed:
                 continue
+
             closed.add(seg)
             edge = g.edges[seg]
+
             if edge.to_node == dst:
-                return self._build(seg, parent, evals, best[seg], turns)
+                return self._build(
+                    seg, parent, evals, best[seg],
+                    turns, depart_at, learned,
+                )
+
             for nxt in g.out.get(edge.to_node, ()):
-                t = turns.cost_s(edge, nxt) if turns else 0.0
-                c = segment_cost(nxt)
-                if math.isinf(t) or math.isinf(c):
+                when = depart_at + timedelta(seconds=elapsed[seg])
+                turn_cost = turns.cost_s(edge, nxt, when) if turns else 0.0
+                if math.isinf(turn_cost):
                     continue
-                cand = best[seg] + t + c
-                if cand < best.get(nxt.segment_id, math.inf):
-                    best[nxt.segment_id], parent[nxt.segment_id] = cand, seg
-                    heapq.heappush(heap, (cand + heuristic(nxt.to_node), next(tie), nxt.segment_id))
+
+                cost = segment_cost(
+                    nxt,
+                    when + timedelta(seconds=turn_cost),
+                )
+                if math.isinf(cost):
+                    continue
+
+                candidate = best[seg] + turn_cost + cost
+
+                if candidate < best.get(nxt.segment_id, math.inf):
+                    best[nxt.segment_id] = candidate
+                    parent[nxt.segment_id] = seg
+                    heapq.heappush(
+                        heap,
+                        (
+                            candidate + heuristic(nxt.to_node),
+                            next(tie),
+                            nxt.segment_id,
+                        ),
+                    )
+
+                    ev = evals[nxt.segment_id]
+                    travel_s = nxt.distance_m / (ev.speed_kmh / 3.6)
+
+                    arrival = (
+                        when
+                        + timedelta(seconds=turn_cost + travel_s)
+                    )
+
+                    wait_s = (
+                        point_delay_s(nxt, arrival, learned)
+                        if nxt.to_node != dst
+                        else 0.0
+                    )
+
+                    elapsed[nxt.segment_id] = (
+                        elapsed[seg] + turn_cost + travel_s + wait_s
+                    )
+
         return None
 
-    def _build(self, last: str, parent: dict[str, str | None], evals: dict[str, EdgeEvaluation],
-               cost: float, turns: TurnModel | None) -> RouteResult:
-        segs: list[str] = []
-        seg: str | None = last
+    def _build(
+        self,
+        last: str,
+        parent: dict[str, str | None],
+        evals: dict[str, EdgeEvaluation],
+        cost: float,
+        turns: TurnModel | None,
+        depart_at: datetime,
+        learned: FittedDelayModel | None,
+    ) -> RouteResult:
+        segs = []
+        seg = last
+
         while seg is not None:
             segs.append(seg)
             seg = parent[seg]
+
         segs.reverse()
         path = [self.graph.edges[s] for s in segs]
         explanation = [evals[s] for s in segs]
         by_seg = {ev.segment_id: ev.speed_kmh for ev in explanation}
+
         driving, delays, turning = route_time_breakdown(
-            path, datetime.now(timezone.utc), lambda e, _: by_seg[e.segment_id], turns)
+            path,
+            depart_at,
+            lambda edge, when: by_seg[edge.segment_id],
+            turns,
+            learned,
+        )
+
         return RouteResult(
             segments=segs,
-            nodes=[path[0].from_node, *(e.to_node for e in path)],
+            nodes=[path[0].from_node, *(edge.to_node for edge in path)],
             cost=cost,
-            distance_m=sum(e.distance_m for e in path),
+            distance_m=sum(edge.distance_m for edge in path),
             eta_s=driving + delays + turning,
             explanation=explanation,
             point_delay_s=delays,
@@ -166,6 +272,76 @@ class RoutingService:
         self.ops_rules: list[Statement] = []
         self.health: dict[str, RoadHealth] = {}
         self.speed_model: FittedSpeedModel | None = None
+        self.delay_model: FittedDelayModel | None = None
+
+    def refresh_delays(
+        self,
+        observations: list[DelayObservation],
+        now: datetime | None = None,
+    ) -> None:
+        """Learn signal and turn waits for this routing service."""
+        if self.buckets is None:
+            raise ValueError("Delay learning requires TimeBuckets")
+
+        now = now or datetime.now(timezone.utc)
+
+        # Index outgoing roads by their starting junction.
+        outgoing_by_node = {}
+
+        for edge in self.edges.values():
+            outgoing_by_node.setdefault(
+                edge.from_node, []
+            ).append(edge)
+
+        # Check only physically connected turns.
+        turn_defaults = {}
+
+        for inbound in self.edges.values():
+            for outbound in outgoing_by_node.get(
+                inbound.to_node, ()
+            ):
+                default = self.turns.cost_s(
+                    inbound, outbound
+                )
+
+                if math.isfinite(default):
+                    turn_defaults[
+                        (inbound.segment_id, outbound.segment_id)
+                    ] = default
+
+        self.delay_model = fit_delay_model(
+            observations,
+            now,
+            self.buckets,
+            signal_default_s=self.profile.point_delay_s.get(
+                "traffic_signals", 30.0
+            ),
+            turn_defaults=turn_defaults,
+        )
+
+        self.turns = replace(self.turns, learned=self.delay_model)
+
+    def refresh_delays_from_gps(
+        self,
+        trips: list[tuple[str, list[GPSObservation]]],
+        now: datetime | None = None,
+    ) -> int:
+        """Extract candidate waits from GPS trips and refit the delay model.
+
+        trips contains (driver_id, GPS observations) pairs.
+        Each refresh must receive the complete intended learning window.
+        """
+        observations = []
+        for driver_id, points in trips:
+            try:
+                observations.extend(
+                    extract_delay_observations(points, self.edges, driver_id)
+                )
+            except ValueError:
+                continue   # e.g. a naive timestamp: skip this trip, keep the rest
+
+        self.refresh_delays(observations, now)
+        return len(observations)
 
     def refresh_telemetry(self, speed_samples: list[SpeedSample], exposures: list[SegmentExposure],
                           now: datetime | None = None) -> list[Statement]:
@@ -191,7 +367,11 @@ class RoutingService:
 
     def _without_point_delay(self, sample: SpeedSample) -> SpeedSample:
         edge = self.edges.get(sample.segment_id)
-        return replace(sample, speed_kmh=moving_speed_kmh(sample.speed_kmh, edge)) if edge else sample
+        if not edge:
+            return sample
+        # Remove the same wait that routing adds (learned if available, else the mapped one).
+        wait_s = point_delay_s(edge, sample.observed_at, self.delay_model)
+        return replace(sample, speed_kmh=moving_speed_kmh(sample.speed_kmh, edge, wait_s))
 
     def set_ops_rules(self, rules: list[Statement]) -> None:
         self.ops_rules = list(rules)
@@ -210,14 +390,36 @@ class RoutingService:
               depart_at: datetime | None = None, options: RouteOptions | None = None) -> RouteResult | None:
         now = now or datetime.now(timezone.utc)
         depart_at = depart_at or now
-        result = self.backend.route(start, end, self.model_for_request(now, depart_at, options), self.turns)
+        model = self.model_for_request(now, depart_at, options)
+
+        if isinstance(self.backend, LocalAStarRouter):
+            result = self.backend.route(
+                start, end, model, self.turns,
+                depart_at=depart_at,
+                learned=self.delay_model,
+            )
+        else:
+            result = self.backend.route(start, end, model, self.turns)
         if result is None:
             return None
         path = [self.edges[s] for s in result.segments if s in self.edges]
         tolls = [e.segment_id for e in path if has_toll(e)]
-        if not self.speed_model or not path:
+        if not path:
             return replace(result, toll_segments=tolls)
-        driving, delays, turning = route_time_breakdown(path, depart_at, self.speed_model.speed_kmh, self.turns)
+
+        if not self.speed_model and not self.delay_model:
+            return replace(result, toll_segments=tolls)
+
+        compiled = CompiledModel(model)
+        speed_fn = (
+            self.speed_model.speed_kmh
+            if self.speed_model
+            else lambda edge, when: compiled.evaluate(edge).speed_kmh
+        )
+
+        driving, delays, turning = route_time_breakdown(
+            path, depart_at, speed_fn, self.turns, self.delay_model
+        )
         return replace(result, eta_s=driving + delays + turning, point_delay_s=delays, turn_s=turning,
                        toll_segments=tolls)
 
@@ -250,6 +452,22 @@ class MultiVehicleRouter:
                           now: datetime | None = None) -> dict[VehicleType, list[Statement]]:
         return {v: svc.refresh_telemetry(speed_samples, exposures, now) for v, svc in self.services.items()}
 
+    def refresh_delays_from_gps(
+        self,
+        trips_by_vehicle: dict[
+            VehicleType,
+            list[tuple[str, list[GPSObservation]]],
+        ],
+        now: datetime | None = None,
+    ) -> dict[VehicleType, int]:
+        """Refit each vehicle's delay model from its GPS trips."""
+        return {
+            vehicle: service.refresh_delays_from_gps(
+                trips_by_vehicle.get(vehicle, []),
+                now,
+            )
+            for vehicle, service in self.services.items()
+        }
 
 def _check_expected_speeds(base: CustomModel, edges: dict[str, EdgeMeta]) -> None:
     """Telemetry measures slowness against edge.speed_kmh; it must equal what the baseline drives at."""

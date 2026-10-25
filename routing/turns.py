@@ -12,6 +12,8 @@ from enum import Enum
 
 from .models import EdgeMeta
 from .vehicles import TurnCosts
+from datetime import datetime
+from .delay_model import FittedDelayModel
 
 LEFT_HAND_TRAFFIC = True   # India
 STRAIGHT_MAX_DEG = 25.0
@@ -86,6 +88,30 @@ class TurnModel:
     costs: TurnCosts
     restrictions: TurnRestrictions = NO_RESTRICTIONS
     left_hand_traffic: bool = LEFT_HAND_TRAFFIC
+    learned: FittedDelayModel | None = None
 
-    def cost_s(self, inbound: EdgeMeta, outbound: EdgeMeta) -> float:
-        return turn_cost_s(inbound, outbound, self.costs, self.restrictions, self.left_hand_traffic)
+    def cost_s(
+        self,
+        inbound: EdgeMeta,
+        outbound: EdgeMeta,
+        when: datetime | None = None,
+    ) -> float:
+        default = turn_cost_s(
+            inbound, outbound,
+            self.costs,
+            self.restrictions,
+            self.left_hand_traffic,
+        )
+
+        if math.isinf(default):
+            return default
+
+        if self.learned is None or when is None:
+            return default
+
+        return self.learned.turn_wait_s(
+            inbound.segment_id,
+            outbound.segment_id,
+            when,
+            default,
+        )

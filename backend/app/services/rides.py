@@ -8,6 +8,7 @@ Matching itself (who gets pinged, who wins) happens in dispatch.py.
 """
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import datetime, timezone
 
@@ -23,7 +24,10 @@ from ..models import (
     PaymentStatus, Rating, Ride, RideOffer, RideStatus, Role, User,
 )
 from ..schemas import DriverInfoOut, PartyOut, PlaceIn, RideCreateIn, RideOut
+from .gps_learning import learn_from_completed_ride
 from .pricing import fare_paise
+
+log = logging.getLogger(__name__)
 
 NO_ROUTE_MESSAGE = "No road route found. The pickup or drop may be outside the area we have maps for."
 
@@ -193,6 +197,14 @@ async def complete_ride(session: AsyncSession, ctx: AppContext, ride_id: str, dr
     if ride.payment_method is PaymentMethod.CASH:
         ride.payment_status = PaymentStatus.PAID     # the driver collects cash on completion
     await session.commit()
+
+    # GPS learning is best-effort: it must never undo ride completion.
+    try:
+        await learn_from_completed_ride(session, ctx, ride)
+    except Exception:
+        await session.rollback()
+        log.exception("GPS delay learning failed for completed ride %s", ride.id)
+
     payload = {**ride_summary(ride), "fare_final_paise": ride.fare_final_paise}
     await ctx.hub.send_many([(ride.rider_id, "ride:completed", payload), (driver.id, "ride:completed", payload)])
     return ride

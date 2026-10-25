@@ -198,3 +198,28 @@ class LocationPing(Base):
     speed_kmh: Mapped[float | None] = mapped_column(Float)
     heading: Mapped[float | None] = mapped_column(Float)
     recorded_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
+
+
+class GPSDelayObservation(Base):
+    """Candidate signal/turn wait extracted from a completed GPS trip."""
+
+    __tablename__ = "gps_delay_observations"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=new_id
+    )
+    ride_id: Mapped[str] = mapped_column(
+        ForeignKey("rides.id"), index=True
+    )
+    driver_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id"), index=True
+    )
+    vehicle_type: Mapped[str] = mapped_column(String(16), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    junction_id: Mapped[str] = mapped_column(String(128))
+    inbound_segment: Mapped[str | None] = mapped_column(String(128))
+    outbound_segment: Mapped[str | None] = mapped_column(String(128))
+    wait_s: Mapped[float] = mapped_column(Float)
+    observed_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), index=True
+    )

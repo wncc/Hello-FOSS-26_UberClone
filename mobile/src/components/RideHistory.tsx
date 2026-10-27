@@ -6,7 +6,7 @@ import { VEHICLE_ICON, formatFare, shortAddress } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import type { Ride } from '@/lib/types';
 
-import { Body, ErrorText, colors, space } from './ui';
+import { Body, ErrorText, space, themed } from './ui';
 
 const STATUS: Record<Ride['status'], string> = {
   searching: 'Searching', driver_assigned: 'Ongoing', driver_arrived: 'Ongoing', in_progress: 'Ongoing',
@@ -16,6 +16,7 @@ const STATUS: Record<Ride['status'], string> = {
 /** Past rides for the logged-in rider or driver; drivers also see today's cash earnings. */
 export function RideHistory({ showEarnings }: { showEarnings?: boolean }) {
   const { api } = useSession();
+  const styles = useStyles();
   const [rides, setRides] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,12 +77,12 @@ export function RideHistory({ showEarnings }: { showEarnings?: boolean }) {
   );
 }
 
-const styles = StyleSheet.create({
-  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderRadius: 12, backgroundColor: colors.surface },
-  route: { fontSize: 15, fontWeight: '600', color: colors.text },
-  meta: { fontSize: 13, color: colors.muted },
-  fare: { fontSize: 15, fontWeight: '700', color: colors.text },
-  earnings: { backgroundColor: colors.primary, borderRadius: 14, padding: space.md },
-  earningsLabel: { color: colors.primaryText, opacity: 0.8 },
-  earningsValue: { color: colors.primaryText, fontSize: 28, fontWeight: '800' },
-});
+const useStyles = themed((t) => StyleSheet.create({
+  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderRadius: 12, backgroundColor: t.surface },
+  route: { fontSize: 15, fontWeight: '600', color: t.text },
+  meta: { fontSize: 13, color: t.muted },
+  fare: { fontSize: 15, fontWeight: '700', color: t.text },
+  earnings: { backgroundColor: t.primary, borderRadius: 14, padding: space.md },
+  earningsLabel: { color: t.primaryText, opacity: 0.8 },
+  earningsValue: { color: t.primaryText, fontSize: 28, fontWeight: '800' },
+}));

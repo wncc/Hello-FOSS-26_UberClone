@@ -1,17 +1,18 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
-import { Loading } from '@/components/ui';
+import { Loading, useTheme } from '@/components/ui';
 import { APP_VARIANT } from '@/lib/config';
 import { SessionProvider, useSession } from '@/lib/session';
 
 function RootStack() {
   const { ready, user } = useSession();
+  const t = useTheme();
   if (!ready) return <Loading />;
   const signedIn = !!user;
   const named = signedIn && !!user.name;
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: t.bg } }}>
       <Stack.Screen name="index" />
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="login" />
@@ -32,7 +33,7 @@ function RootStack() {
 export default function RootLayout() {
   return (
     <SessionProvider>
-      <StatusBar style="dark" />
+      <StatusBar style="auto" />
       <RootStack />
     </SessionProvider>
   );

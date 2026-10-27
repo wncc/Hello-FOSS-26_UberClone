@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Body, Button, ErrorText, Input, Row, Screen, colors, space } from '@/components/ui';
+import { Body, Button, ErrorText, Input, Row, Screen, space, themed } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, VEHICLE_LABEL, VEHICLE_ORDER } from '@/lib/format';
 import { useSession } from '@/lib/session';
@@ -10,6 +10,7 @@ import type { VehicleType } from '@/lib/types';
 
 export default function Vehicle() {
   const { api } = useSession();
+  const styles = useStyles();
   const [vehicle, setVehicle] = useState<VehicleType>('auto_rickshaw');
   const [number, setNumber] = useState('');
   const [model, setModel] = useState('');
@@ -60,10 +61,10 @@ export default function Vehicle() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((t) => StyleSheet.create({
   choice: {
-    flex: 1, alignItems: 'center', padding: space.md, borderRadius: 12, borderWidth: 2, borderColor: colors.border, gap: 4,
+    flex: 1, alignItems: 'center', padding: space.md, borderRadius: 12, borderWidth: 2, borderColor: t.border, gap: 4,
   },
-  selected: { borderColor: colors.primary, backgroundColor: colors.surface },
-  choiceText: { fontWeight: '600', color: colors.text },
-});
+  selected: { borderColor: t.primary, backgroundColor: t.surface },
+  choiceText: { fontWeight: '600', color: t.text },
+}));

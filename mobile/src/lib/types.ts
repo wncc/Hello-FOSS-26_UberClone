@@ -99,6 +99,20 @@ export interface DriverProfile {
   is_online: boolean;
 }
 
+/** One calendar day of a driver's earnings, counted in India time (IST). */
+export interface EarningsDay {
+  day: string;                 // 'YYYY-MM-DD'
+  earnings_paise: number;
+  trips: number;
+}
+
+export interface Earnings {
+  days: number;
+  total_paise: number;
+  trips: number;
+  per_day: EarningsDay[];      // oldest first, today last; every day present, 0 when idle
+}
+
 /** Summary sent with ride events (never contains the PIN). */
 export interface RideSummary {
   ride_id: string;

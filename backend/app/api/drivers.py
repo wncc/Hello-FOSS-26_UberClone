@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +10,8 @@ from ..context import AppContext
 from ..deps import get_ctx, get_session, require
 from ..errors import DomainError
 from ..models import DriverProfile, DriverStatus, OfferStatus, Ride, RideOffer, Role, User
-from ..schemas import DriverProfileIn, DriverProfileOut, LocationIn, OnlineIn
+from ..schemas import DriverProfileIn, DriverProfileOut, EarningsOut, LocationIn, OnlineIn
+from ..services.earnings import driver_earnings
 from ..services.locations import update_location
 from ..services.rides import active_ride_of, approved_driver, ride_summary
 
@@ -69,6 +70,13 @@ async def post_location(body: LocationIn, user: User = Depends(driver_only), ctx
                         session: AsyncSession = Depends(get_session)) -> None:
     profile = await approved_driver(session, user)
     await update_location(session, ctx, user, profile, body)
+
+
+@router.get("/earnings", response_model=EarningsOut)
+async def get_earnings(days: int = Query(7, ge=1, le=31), user: User = Depends(driver_only),
+                       session: AsyncSession = Depends(get_session)) -> EarningsOut:
+    """Completed rides over the last `days` calendar days in India time, today included, one row per day."""
+    return await driver_earnings(session, user.id, days)
 
 
 @router.get("/offer")

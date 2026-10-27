@@ -16,6 +16,15 @@ test('sends bearer token and JSON body', async () => {
   expect(JSON.parse(String(init.body))).toEqual({ name: 'Asha' });
 });
 
+test('asks for the driver earnings window in days', async () => {
+  const fetchImpl = jest.fn(async () => response(200, { days: 7, total_paise: 0, trips: 0, per_day: [] }));
+  const api = new Api('http://x', { access: () => 'tok', refresh: async () => null }, fetchImpl as unknown as typeof fetch);
+  await expect(api.earnings()).resolves.toMatchObject({ days: 7 });
+  await api.earnings(30);
+  const urls = fetchImpl.mock.calls.map((c) => (c as unknown as [string])[0]);
+  expect(urls).toEqual(['http://x/drivers/me/earnings?days=7', 'http://x/drivers/me/earnings?days=30']);
+});
+
 test('refreshes once on 401 and retries', async () => {
   let token = 'old';
   const fetchImpl = jest.fn<typeof fetch>()

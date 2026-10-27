@@ -369,6 +369,8 @@ def scenario(run_: Run, rider: Page, driver: Page) -> None:
         see(s, rider, "Completed")
         text(driver, "Earnings").click()
         see(s, driver, "Today’s earnings")
+        see(s, driver, "Last 7 days")                             # the week block (issue 009)
+        see(s, driver, "1 trip")
         see(s, driver, "Completed")
     run_.step("Ride appears in rider history and driver earnings", history)
 

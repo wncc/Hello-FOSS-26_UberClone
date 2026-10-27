@@ -83,7 +83,7 @@ That's a 221 MB download and about a 5-minute import. Mumbai comes out at roughl
 |---|---|
 | Auth | `POST /auth/otp/request`, `POST /auth/otp/verify` (role `rider` / `driver` on first login), `POST /auth/refresh` |
 | Me | `GET /me`, `PATCH /me` |
-| Driver | `PUT /drivers/me` (vehicle), `GET /drivers/me`, `POST /drivers/me/online`, `POST /drivers/me/location`, `GET /drivers/me/offer` |
+| Driver | `PUT /drivers/me` (vehicle), `GET /drivers/me`, `POST /drivers/me/online`, `POST /drivers/me/location`, `GET /drivers/me/offer`, `GET /drivers/me/earnings?days=7` (completed rides per calendar day in IST, today included) |
 | Rides | `POST /rides/estimate` (fare + road path per vehicle), `GET /rides/{id}/route` (trip path + driver's path to the pickup), `POST /rides`, `GET /rides`, `GET /rides/active`, `GET /rides/{id}`, then `accept` / `reject` / `arrived` / `start` (PIN) / `complete` / `cancel` / `rating` under `/rides/{id}/` |
 | Admin | `GET /admin/drivers?status=`, `POST /admin/drivers/{id}/approve` / `suspend`, `GET /admin/rides` |
 | Real-time | `WS /ws?token=<access token>` |

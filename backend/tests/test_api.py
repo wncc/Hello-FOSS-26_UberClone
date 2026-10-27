@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from routing import IST
+
+from backend.app.models import Ride
+from backend.app.services import earnings as earnings_service
+
 from .conftest import Actor, driver, rider, tick
 
 PICKUP = {"lat": 12.9716, "lng": 77.5946, "address": "MG Road"}
@@ -198,6 +203,71 @@ def test_roles_are_enforced(client):
 # --------------------------------------------------------------------------- #
 # Admin approval
 # --------------------------------------------------------------------------- #
+
+# --------------------------------------------------------------------------- #
+# Driver earnings
+# --------------------------------------------------------------------------- #
+
+def complete_ride(client, r: Actor, d: Actor) -> dict:
+    """Book, ping, accept, arrive, start, complete: a finished ride with a final fare."""
+    ride = book(r)
+    tick(client)
+    assert d.post(f"/rides/{ride['id']}/accept").status_code == 202
+    tick(client)
+    assert d.post(f"/rides/{ride['id']}/arrived").status_code == 200
+    assert d.post(f"/rides/{ride['id']}/start", {"pin": ride["pin"]}).status_code == 200
+    done = d.post(f"/rides/{ride['id']}/complete").json()
+    assert done["status"] == "completed" and done["fare_final_paise"] > 0
+    return done
+
+
+def set_completed_at(client, ride_id: str, when: datetime) -> None:
+    """Pretend the ride finished at `when` (the API always stamps the real clock)."""
+    async def run() -> None:
+        async with client.app.state.ctx.db.sessions() as session:
+            ride = await session.get(Ride, ride_id)
+            ride.completed_at = when
+            await session.commit()
+    client.portal.call(run)
+
+
+def test_driver_earnings_count_days_in_india_time(client, monkeypatch):
+    now = datetime(2026, 10, 28, 10, 0, tzinfo=IST)       # a Wednesday morning in Mumbai
+    monkeypatch.setattr(earnings_service, "_now", lambda: now.astimezone(timezone.utc))
+    r = rider(client)
+    d = driver(client, 12.9726, 77.5946)
+
+    late = complete_ride(client, r, d)                     # 23:30 IST on the 27th stays on the 27th
+    set_completed_at(client, late["id"], datetime(2026, 10, 27, 23, 30, tzinfo=IST))
+    early = complete_ride(client, r, d)                    # 00:30 IST on the 28th = 19:00 UTC on the 27th:
+    set_completed_at(client, early["id"], datetime(2026, 10, 28, 0, 30, tzinfo=IST))   # still the 28th
+    old = complete_ride(client, r, d)                      # a week ago: just outside a 7-day window
+    set_completed_at(client, old["id"], datetime(2026, 10, 21, 12, 0, tzinfo=IST))
+    fare = late["fare_final_paise"]
+
+    cancelled = book(r)                                    # assigned to d, then cancelled: not earned
+    tick(client)
+    assert d.post(f"/rides/{cancelled['id']}/accept").status_code == 202
+    tick(client)
+    assert r.post(f"/rides/{cancelled['id']}/cancel").json()["status"] == "cancelled"
+
+    week = d.get("/drivers/me/earnings?days=7").json()
+    assert week["days"] == 7 and week["trips"] == 2 and week["total_paise"] == 2 * fare
+    assert [x["day"] for x in week["per_day"]] == [f"2026-10-{n}" for n in range(22, 29)]
+    by_day = {x["day"]: x for x in week["per_day"]}
+    assert by_day["2026-10-27"] == {"day": "2026-10-27", "earnings_paise": fare, "trips": 1}
+    assert by_day["2026-10-28"] == {"day": "2026-10-28", "earnings_paise": fare, "trips": 1}
+    assert by_day["2026-10-26"] == {"day": "2026-10-26", "earnings_paise": 0, "trips": 0}
+
+    today = d.get("/drivers/me/earnings?days=1").json()
+    assert today["trips"] == 1 and [x["day"] for x in today["per_day"]] == ["2026-10-28"]
+    assert d.get("/drivers/me/earnings?days=8").json()["trips"] == 3     # the window now reaches the 21st
+    assert d.get("/drivers/me/earnings").json()["days"] == 7              # the default is a week
+
+    assert d.get("/drivers/me/earnings?days=0").status_code == 422
+    assert d.get("/drivers/me/earnings?days=32").status_code == 422
+    assert r.get("/drivers/me/earnings").status_code == 403               # drivers only
+
 
 def test_admin_approves_pending_driver(make_client):
     client = make_client(auto_approve_drivers=False, admin_phones=("+919999999999",))

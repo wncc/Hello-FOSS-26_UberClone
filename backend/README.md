@@ -17,6 +17,7 @@ python -m pytest backend                                            # backend te
 | `app/services/rides.py` | The ride lifecycle: booking, accept / reject, arrived, PIN start, complete, cancel, rating |
 | `app/services/dispatch.py` | The every-3-seconds loop: builds the matching engine's input from the database, applies its decisions, sends events |
 | `app/services/pricing.py` | Fare cards (bike / auto / cab) and the fare formula |
+| `app/services/earnings.py` | A driver's completed rides summed per calendar day in India time (the weekly earnings screen) |
 | `app/services/routes.py` | Trip distance, time and road geometry from the routing engine (or straight-line without road data) |
 | `app/services/realtime.py` | WebSocket hub: sends events to a user's open connections |
 | `app/services/locations.py` | Driver GPS: latest position, stored breadcrumbs, forwarding to the rider |

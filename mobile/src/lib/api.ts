@@ -1,5 +1,5 @@
 import type {
-  DriverProfile, EstimateOption, LatLng, Offer, Place, Ride, RideRoute, Tokens, User, VehicleType,
+  DriverProfile, Earnings, EstimateOption, LatLng, Offer, Place, Ride, RideRoute, Tokens, User, VehicleType,
 } from './types';
 
 export class ApiError extends Error {
@@ -76,6 +76,7 @@ export class Api {
   sendLocation = (loc: LatLng & { heading?: number | null; speed_kmh?: number | null }) =>
     this.request<void>('POST', '/drivers/me/location', loc);
   currentOffer = () => this.request<Offer | null>('GET', '/drivers/me/offer');
+  earnings = (days = 7) => this.request<Earnings>('GET', `/drivers/me/earnings?days=${days}`);
   accept = (id: string) => this.request<{ status: string }>('POST', `/rides/${id}/accept`);
   reject = (id: string) => this.request<void>('POST', `/rides/${id}/reject`);
   arrived = (id: string) => this.request<Ride>('POST', `/rides/${id}/arrived`);

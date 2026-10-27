@@ -1,7 +1,7 @@
 """Request / response bodies. Money in paise, distances in metres, durations in seconds."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -67,6 +67,19 @@ class DriverProfileOut(BaseModel):
 
 class OnlineIn(BaseModel):
     online: bool
+
+
+class EarningsDayOut(BaseModel):
+    day: date                        # a calendar day in India time (IST)
+    earnings_paise: int
+    trips: int
+
+
+class EarningsOut(BaseModel):
+    days: int
+    total_paise: int
+    trips: int
+    per_day: list[EarningsDayOut]    # oldest first, today last; every day is present, 0 when idle
 
 
 class LocationIn(BaseModel):

@@ -9,6 +9,8 @@
  * Leaflet library in jsdom (see __tests__/mapPage.test.ts).
  */
 
+import { MAP_BG } from '../../lib/theme';
+
 export const LEAFLET_VERSION = '1.9.4';
 
 /**
@@ -19,11 +21,14 @@ export const LEAFLET_VERSION = '1.9.4';
 export const TILE_URL = process.env.EXPO_PUBLIC_MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 export const TILE_ATTRIBUTION = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION || '© OpenStreetMap contributors';
 
-/** Defines createRideMap(L, element, post, options) -> { update(state) }. */
+/** Defines createRideMap(L, element, post, options) -> { update(state), setDark(bool) }. */
 export const MAP_SCRIPT = String.raw`
 function createRideMap(L, el, post, opts) {
   var map = L.map(el, { zoomControl: false, attributionControl: true })
     .setView([opts.center.lat, opts.center.lng], opts.zoom || 15);
+  // Dark mode: the page's CSS inverts the tiles (body.dark), and the lines get colours that show on them.
+  var dark = !!opts.dark;
+  document.body.classList.toggle('dark', dark);
   var tileErrorSent = false;
   L.tileLayer(opts.tileUrl, { maxZoom: 19, attribution: opts.attribution })
     .on('tileerror', function () {
@@ -33,7 +38,7 @@ function createRideMap(L, el, post, opts) {
 
   var layers = { pickup: null, drop: null, driver: null, me: null, line: null, route: null, approach: null };
   var lineKeys = {};
-  var picking = false, lastRecenter = null, lastFit = null;
+  var picking = false, lastRecenter = null, lastFit = null, lastState = null;
 
   function dot(color, radius) {
     return function (ll) {
@@ -77,6 +82,7 @@ function createRideMap(L, el, post, opts) {
   });
 
   function update(s) {
+    lastState = s;
     map.invalidateSize();
     picking = !!s.picking;
     setPoint('pickup', s.pickup);
@@ -86,10 +92,10 @@ function createRideMap(L, el, post, opts) {
 
     var hasRoute = !!(s.route && s.route.length > 1);
     // The road route; a dashed straight line only as a fallback while no route is known.
-    setLine('route', hasRoute ? s.route : null, { color: '#111827', weight: 5, opacity: 0.85 });
+    setLine('route', hasRoute ? s.route : null, { color: dark ? '#f8fafc' : '#111827', weight: 5, opacity: 0.85 });
     setLine('line', !hasRoute && s.pickup && s.drop ? [[s.pickup.lat, s.pickup.lng], [s.drop.lat, s.drop.lng]] : null,
-            { color: '#6b7280', weight: 3, dashArray: '6 8' });
-    setLine('approach', s.approach, { color: '#2563eb', weight: 5, opacity: 0.9, dashArray: '1 9', lineCap: 'round' });
+            { color: dark ? '#9ca3af' : '#6b7280', weight: 3, dashArray: '6 8' });
+    setLine('approach', s.approach, { color: dark ? '#60a5fa' : '#2563eb', weight: 5, opacity: 0.9, dashArray: '1 9', lineCap: 'round' });
 
     if (s.recenter && s.recenter.key !== lastRecenter) {
       lastRecenter = s.recenter.key;
@@ -105,7 +111,17 @@ function createRideMap(L, el, post, opts) {
     }
   }
 
-  return { update: update, map: map };
+  // Switching theme while the map is open: restyle in place, so the map isn't reloaded and doesn't jump.
+  function setDark(d) {
+    d = !!d;
+    if (d === dark) return;
+    dark = d;
+    document.body.classList.toggle('dark', dark);
+    lineKeys = {};                       // forces the lines to be redrawn with the new colours
+    if (lastState) update(lastState);
+  }
+
+  return { update: update, setDark: setDark, map: map };
 }
 `;
 
@@ -114,6 +130,8 @@ export interface MapOptions {
   zoom?: number;
   tileUrl?: string;
   attribution?: string;
+  /** Start in dark mode (inverted tiles, light lines). Changed later with darkScript(). */
+  dark?: boolean;
 }
 
 export function mapHtml(options: MapOptions): string {
@@ -124,7 +142,14 @@ export function mapHtml(options: MapOptions): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css">
-<style>html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: #e5e7eb; }</style>
+<style>
+html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: ${MAP_BG.light}; }
+body.dark, body.dark #map { background: ${MAP_BG.dark}; }
+/* Quick dark map style: invert the raster tiles and put the hue back, so water stays blue and parks green. */
+body.dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
+body.dark .leaflet-control-attribution { background: rgba(15, 23, 42, 0.8); color: #cbd5e1; }
+body.dark .leaflet-control-attribution a { color: #93c5fd; }
+</style>
 </head>
 <body>
 <div id="map"></div>
@@ -187,4 +212,9 @@ export function parseMapMessage(raw: string): MapMessage | null {
 /** JS to run in the page for a state update. JSON is a valid JS literal, so no escaping is needed. */
 export function updateScript(state: MapState): string {
   return `window.rideMap && window.rideMap.update(${JSON.stringify(state)}); true;`;
+}
+
+/** JS to run in the page when the phone switches between light and dark. */
+export function darkScript(dark: boolean): string {
+  return `window.rideMap && window.rideMap.setDark(${dark ? 'true' : 'false'}); true;`;
 }

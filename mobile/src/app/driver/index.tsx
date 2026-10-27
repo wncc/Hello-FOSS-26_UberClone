@@ -4,7 +4,7 @@ import { StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RideMap } from '@/components/RideMap';
-import { Body, Button, ErrorText, Row, Sheet, Title, colors, space } from '@/components/ui';
+import { Body, Button, ErrorText, Row, Sheet, Title, space, themed, useTheme } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, formatDistance, formatDuration, formatFare, shortAddress } from '@/lib/format';
 import { DEFAULT_CENTER, useDriverLocationReporter } from '@/lib/location';
@@ -14,6 +14,8 @@ import type { DriverProfile } from '@/lib/types';
 
 export default function DriverHome() {
   const { api, user, signOut, socketConnected } = useSession();
+  const styles = useStyles();
+  const t = useTheme();
   const [profile, setProfile] = useState<DriverProfile | null>(null);
   const [state, dispatch] = useReducer(driverHome, { mode: 'offline' });
   const [now, setNow] = useState(() => Date.now());
@@ -110,7 +112,7 @@ export default function DriverHome() {
       <SafeAreaView edges={['top']} style={styles.topBar}>
         <Row style={{ justifyContent: 'space-between' }}>
           <Row style={styles.chip}>
-            <Text style={{ fontWeight: '700' }}>{online ? '● Online' : '○ Offline'}</Text>
+            <Text style={{ fontWeight: '700', color: t.text }}>{online ? '● Online' : '○ Offline'}</Text>
             <Switch value={online} onValueChange={toggleOnline} disabled={busy || profile?.status !== 'approved'} />
           </Row>
           <Row>
@@ -170,11 +172,11 @@ export default function DriverHome() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((t) => StyleSheet.create({
   topBar: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: space.md, paddingTop: space.sm },
   chip: {
-    backgroundColor: colors.bg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, overflow: 'hidden',
-    fontWeight: '600', color: colors.text, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4,
+    backgroundColor: t.bg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, overflow: 'hidden',
+    fontWeight: '600', color: t.text, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4,
   },
-  countdown: { fontSize: 22, fontWeight: '800', color: colors.danger },
-});
+  countdown: { fontSize: 22, fontWeight: '800', color: t.danger },
+}));

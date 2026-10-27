@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RideMap } from '@/components/RideMap';
-import { Body, Button, ErrorText, Loading, Row, Sheet, Title, colors, space } from '@/components/ui';
+import { Body, Button, ErrorText, Loading, Row, Sheet, Title, space, themed, useTheme } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, VEHICLE_LABEL, formatFare, isFinished, riderStatusText, shortAddress } from '@/lib/format';
 import { confirmAction } from '@/lib/dialogs';
@@ -17,6 +17,7 @@ const POLL_MS = 10_000;   // safety net if a live event is missed
 export default function RiderRide() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { api } = useSession();
+  const styles = useStyles();
   const [ride, setRide] = useState<Ride | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -100,6 +101,8 @@ export default function RiderRide() {
 
 function Completed({ ride }: { ride: Ride }) {
   const { api } = useSession();
+  const styles = useStyles();
+  const t = useTheme();
   const [stars, setStars] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,7 +127,7 @@ function Completed({ ride }: { ride: Ride }) {
       <Row style={{ justifyContent: 'center', gap: space.md }}>
         {[1, 2, 3, 4, 5].map((n) => (
           <Pressable key={n} onPress={() => setStars(n)} accessibilityLabel={`${n} stars`}>
-            <Text style={{ fontSize: 36, color: n <= stars ? colors.warning : colors.border }}>★</Text>
+            <Text style={{ fontSize: 36, color: n <= stars ? t.warning : t.border }}>★</Text>
           </Pressable>
         ))}
       </Row>
@@ -134,11 +137,11 @@ function Completed({ ride }: { ride: Ride }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((t) => StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.lg },
-  driverRow: { backgroundColor: colors.surface, borderRadius: 14, padding: space.md },
-  strong: { fontSize: 17, fontWeight: '700', color: colors.text },
-  pinBox: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6 },
-  pinLabel: { color: colors.primaryText, fontSize: 11, fontWeight: '600' },
-  pin: { color: colors.primaryText, fontSize: 22, fontWeight: '800', letterSpacing: 4 },
-});
+  driverRow: { backgroundColor: t.surface, borderRadius: 14, padding: space.md },
+  strong: { fontSize: 17, fontWeight: '700', color: t.text },
+  pinBox: { alignItems: 'center', backgroundColor: t.primary, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6 },
+  pinLabel: { color: t.primaryText, fontSize: 11, fontWeight: '600' },
+  pin: { color: t.primaryText, fontSize: 22, fontWeight: '800', letterSpacing: 4 },
+}));

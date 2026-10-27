@@ -378,6 +378,7 @@ def main() -> int:
     parser.add_argument("--skip-build", action="store_true", help="reuse e2e/.build from the last run")
     parser.add_argument("--headed", action="store_true", help="show the browser windows")
     parser.add_argument("--slow-mo", type=int, default=0, help="ms pause between actions (with --headed)")
+    parser.add_argument("--dark", action="store_true", help="phones set to dark mode (screenshots every screen in dark)")
     args = parser.parse_args()
 
     BUILD.mkdir(parents=True, exist_ok=True)
@@ -395,7 +396,8 @@ def main() -> int:
             browser = p.chromium.launch(headless=not args.headed, slow_mo=args.slow_mo)
             phones = {}
             for who, gps in (("rider", PICKUP_GPS), ("driver", DRIVER_GPS)):
-                ctx = browser.new_context(**PHONE, geolocation=gps, permissions=["geolocation"])
+                ctx = browser.new_context(**PHONE, geolocation=gps, permissions=["geolocation"],
+                                          color_scheme="dark" if args.dark else "light")
                 phones[who] = ctx.new_page()
             run_ = Run(phones)
             scenario(run_, phones["rider"], phones["driver"])

@@ -25,7 +25,7 @@ Checks include:
 - a wrong PIN is rejected
 - the ride appears in history and earnings
 
-To watch it run in real browser windows: `python e2e/run_e2e.py --headed --slow-mo 400`.
+To watch it run in real browser windows: `python e2e/run_e2e.py --headed --slow-mo 400`. Add `--dark` to play the same ride with both phones in dark mode; the report then has every screen in dark.
 
 The browser test runs the same app code as the phone. The only browser-specific parts are the map container (an iframe instead of a native WebView, both showing the same Leaflet page), token storage, and confirmation dialogs. Phone-only features aren't covered: background GPS, native keyboard behaviour, and address names (the phone's geocoder; the browser shows coordinates).
 

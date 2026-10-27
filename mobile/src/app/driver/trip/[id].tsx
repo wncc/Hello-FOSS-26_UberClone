@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RideMap } from '@/components/RideMap';
-import { Body, Button, ErrorText, Input, Loading, Row, Sheet, Title, colors, space } from '@/components/ui';
+import { Body, Button, ErrorText, Input, Loading, Row, Sheet, Title, space, themed, useTheme } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { confirmAction, notify } from '@/lib/dialogs';
 import { directionsUrl, formatFare, shortAddress } from '@/lib/format';
@@ -15,6 +15,7 @@ import type { Ride } from '@/lib/types';
 export default function DriverTrip() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { api } = useSession();
+  const styles = useStyles();
   const [ride, setRide] = useState<Ride | null>(null);
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
@@ -124,6 +125,8 @@ export default function DriverTrip() {
 
 function Finished({ ride }: { ride: Ride }) {
   const { api } = useSession();
+  const styles = useStyles();
+  const t = useTheme();
   const [stars, setStars] = useState(0);
   const [busy, setBusy] = useState(false);
 
@@ -140,7 +143,7 @@ function Finished({ ride }: { ride: Ride }) {
       <Row style={{ justifyContent: 'center', gap: space.md }}>
         {[1, 2, 3, 4, 5].map((n) => (
           <Pressable key={n} onPress={() => setStars(n)} accessibilityLabel={`${n} stars`}>
-            <Text style={{ fontSize: 36, color: n <= stars ? colors.warning : colors.border }}>★</Text>
+            <Text style={{ fontSize: 36, color: n <= stars ? t.warning : t.border }}>★</Text>
           </Pressable>
         ))}
       </Row>
@@ -149,7 +152,7 @@ function Finished({ ride }: { ride: Ride }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((t) => StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.lg },
-  fare: { fontSize: 18, fontWeight: '800', color: colors.text },
-});
+  fare: { fontSize: 18, fontWeight: '800', color: t.text },
+}));

@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, test } from '@jest/globals';
 
-import { MAP_SCRIPT, mapHtml, parseMapMessage, updateScript, type MapState } from '../mapPage';
+import { MAP_SCRIPT, darkScript, mapHtml, parseMapMessage, updateScript, type MapState } from '../mapPage';
 
 type Posted = { type: string; lat?: number; lng?: number; message?: string };
 
@@ -20,7 +20,11 @@ Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: tru
 const L = require('leaflet');
 const createRideMap = new Function(`${MAP_SCRIPT}; return createRideMap;`)() as (
   l: unknown, el: HTMLElement, post: (m: Posted) => void, opts: object,
-) => { update: (s: MapState) => void; map: { getCenter(): { lat: number; lng: number }; getZoom(): number; eachLayer(f: (l: unknown) => void): void } };
+) => {
+  update: (s: MapState) => void;
+  setDark: (dark: boolean) => void;
+  map: { getCenter(): { lat: number; lng: number }; getZoom(): number; eachLayer(f: (l: unknown) => void): void };
+};
 
 const BLR = { lat: 12.9716, lng: 77.5946 };
 const base: MapState = { picking: false, route: null, approach: null, pickup: null, drop: null, driver: null, me: null, recenter: null, fitKey: '' };
@@ -38,6 +42,7 @@ function vectorLayers(): number {
 
 beforeEach(() => {
   document.body.innerHTML = '<div id="map"></div>';
+  document.body.className = '';
   posted = [];
   ride = createRideMap(L, document.getElementById('map')!, (m) => posted.push(m),
     { center: BLR, zoom: 15, tileUrl: 'https://tiles.test/{z}/{x}/{y}.png', attribution: 'test' });
@@ -113,6 +118,36 @@ describe('map script', () => {
     expect(second).toBe(first);
   });
 
+  test('dark mode marks the page and recolours the lines in place', () => {
+    const routeColor = () => {
+      let color: string | undefined;
+      ride.map.eachLayer((l) => { if (l instanceof L.Polyline) color = (l as { options: { color?: string } }).options.color; });
+      return color;
+    };
+    const route: [number, number][] = [[19.0, 72.8], [19.01, 72.81], [19.02, 72.82]];
+    ride.update({ ...base, route, fitKey: 'k1' });
+    expect(document.body.classList.contains('dark')).toBe(false);
+    expect(routeColor()).toBe('#111827');
+
+    const centre = ride.map.getCenter();
+    ride.setDark(true);
+    expect(document.body.classList.contains('dark')).toBe(true);
+    expect(routeColor()).toBe('#f8fafc');                 // readable on inverted tiles
+    expect(ride.map.getCenter().lat).toBeCloseTo(centre.lat, 4);   // restyled, not refitted or reloaded
+    expect(ride.map.getCenter().lng).toBeCloseTo(centre.lng, 4);
+
+    ride.setDark(false);
+    expect(document.body.classList.contains('dark')).toBe(false);
+    expect(routeColor()).toBe('#111827');
+  });
+
+  test('starts dark when asked', () => {
+    const el = document.createElement('div');
+    document.body.appendChild(el);
+    createRideMap(L, el, () => {}, { center: BLR, dark: true, tileUrl: 'x', attribution: '' });
+    expect(document.body.classList.contains('dark')).toBe(true);
+  });
+
   test('tile failures are reported once', () => {
     ride.map.eachLayer((l) => {
       if (l instanceof L.TileLayer) {
@@ -138,6 +173,16 @@ describe('bridge helpers', () => {
     const state = { ...base, pickup: { lat: 1, lng: 2 }, fitKey: "it's \"quoted\"" };
     new Function('window', updateScript(state))(win);
     expect(calls).toEqual([state]);
+  });
+
+  test('html carries the dark tile style, and the dark script calls setDark', () => {
+    expect(mapHtml({ center: BLR, dark: true })).toContain('"dark":true');
+    expect(mapHtml({ center: BLR })).toContain('body.dark .leaflet-tile-pane { filter: invert(1)');
+    const calls: boolean[] = [];
+    new Function('window', darkScript(true))({ rideMap: { setDark: (d: boolean) => calls.push(d) } });
+    new Function('window', darkScript(false))({ rideMap: { setDark: (d: boolean) => calls.push(d) } });
+    expect(calls).toEqual([true, false]);
+    expect(() => new Function('window', darkScript(true))({})).not.toThrow();   // page not ready yet
   });
 
   test('parses only well-formed messages', () => {

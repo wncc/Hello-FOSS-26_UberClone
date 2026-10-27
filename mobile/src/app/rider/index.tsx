@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RideMap } from '@/components/RideMap';
-import { Body, Button, ErrorText, Row, Sheet, colors, space } from '@/components/ui';
+import { Body, Button, ErrorText, Row, Sheet, space, themed, useTheme } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, VEHICLE_LABEL, VEHICLE_ORDER, formatDistance, formatDuration, formatFare, shortAddress } from '@/lib/format';
 import { DEFAULT_CENTER, addressLabel, useCurrentPosition } from '@/lib/location';
@@ -17,6 +17,7 @@ const CHOOSE_SHEET_HEIGHT = 440;   // three fare options + the book button
 
 export default function RiderHome() {
   const { api, user, signOut } = useSession();
+  const styles = useStyles();
   const { position, error: locationError, retry: retryLocation } = useCurrentPosition();
   const [step, setStep] = useState<Step>('pickup');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
@@ -166,24 +167,26 @@ export default function RiderHome() {
 }
 
 function Chip({ text, onPress }: { text: string; onPress?: () => void }) {
+  const styles = useStyles();
+  const t = useTheme();
   return (
     <Pressable onPress={onPress} disabled={!onPress} style={styles.chip}>
-      <Text style={{ fontWeight: '600', color: colors.text }}>{text}</Text>
+      <Text style={{ fontWeight: '600', color: t.text }}>{text}</Text>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((t) => StyleSheet.create({
   topBar: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: space.md, paddingTop: space.sm },
   chip: {
-    backgroundColor: colors.bg, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    backgroundColor: t.bg, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
     shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4,
   },
   option: {
     flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.sm, borderRadius: 12,
     borderWidth: 2, borderColor: 'transparent',
   },
-  optionSelected: { borderColor: colors.primary, backgroundColor: colors.surface },
-  optionTitle: { fontSize: 17, fontWeight: '600', color: colors.text },
-  optionSub: { fontSize: 13, color: colors.muted },
-});
+  optionSelected: { borderColor: t.primary, backgroundColor: t.surface },
+  optionTitle: { fontSize: 17, fontWeight: '600', color: t.text },
+  optionSub: { fontSize: 13, color: t.muted },
+}));

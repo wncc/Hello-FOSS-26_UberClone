@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import type { LatLng } from '@/lib/types';
 
-import { colors } from '../ui';
+import { themed } from '../ui';
 import { parseMapMessage, type MapState, type Path } from './mapPage';
 
 export interface RideMapProps {
@@ -73,6 +73,7 @@ export function mapBoxStyle(bottomInset = 0, picking = false) {
 
 /** Centre pin (picking mode) and error banner, drawn over the map. */
 export function MapOverlays({ picking, pinLabel, error }: { picking: boolean; pinLabel?: string; error: string | null }) {
+  const styles = useStyles();
   return (
     <>
       {picking ? (
@@ -92,17 +93,17 @@ export function MapOverlays({ picking, pinLabel, error }: { picking: boolean; pi
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((t) => StyleSheet.create({
   // The bottom of this block (the pin's tip) sits exactly on the map centre, which is what gets reported.
   pinAnchor: { position: 'absolute', left: 0, right: 0, bottom: '50%', alignItems: 'center' },
   pin: { fontSize: 36, lineHeight: 40, marginBottom: -4 },
   pinLabel: {
-    backgroundColor: colors.primary, color: colors.primaryText, paddingHorizontal: 10, paddingVertical: 4,
+    backgroundColor: t.primary, color: t.primaryText, paddingHorizontal: 10, paddingVertical: 4,
     borderRadius: 8, overflow: 'hidden', fontWeight: '600', marginBottom: 2,
   },
   errorWrap: { position: 'absolute', top: 100, left: 16, right: 16, alignItems: 'center' },
   error: {
-    backgroundColor: colors.danger, color: colors.primaryText, padding: 10, borderRadius: 10, overflow: 'hidden',
+    backgroundColor: t.danger, color: t.primaryText, padding: 10, borderRadius: 10, overflow: 'hidden',
     fontWeight: '600', textAlign: 'center',
   },
-});
+}));

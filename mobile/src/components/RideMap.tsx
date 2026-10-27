@@ -2,23 +2,33 @@ import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-import { MapOverlays, buildMapState, mapBoxStyle, onMapMessage, type RideMapProps } from './map/mapShared';
+import { useLanguage } from '@/lib/i18n';
+
+import {
+  MapOverlays,
+  buildMapState,
+  mapBoxStyle,
+  onMapMessage,
+  type RideMapProps,
+} from './map/mapShared';
 import { mapHtml, updateScript } from './map/mapPage';
 
-/**
- * Map area above the bottom sheet: Leaflet in a WebView (RideMap.web.tsx is the browser version).
- *  - Picking mode (`onCenterChange` set): a fixed centre pin; reports where the user dragged
- *    the map. `recenterTo` / `recenterKey` move the map programmatically.
- *  - Display mode: shows pickup / drop / driver markers and keeps them in view.
- */
 export function RideMap(props: RideMapProps) {
   const web = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useLanguage();
 
-  // The page is built once; later changes go through update() so the map isn't reloaded.
-  const [html] = useState(() => mapHtml({ center: { lat: props.initialCenter.lat, lng: props.initialCenter.lng } }));
-  const script = updateScript(buildMapState(props));   // a string, so the effect runs only when something changed
+  const [html] = useState(() =>
+    mapHtml({
+      center: {
+        lat: props.initialCenter.lat,
+        lng: props.initialCenter.lng,
+      },
+    }),
+  );
+
+  const script = updateScript(buildMapState(props));
 
   useEffect(() => {
     if (ready) web.current?.injectJavaScript(script);
@@ -32,15 +42,30 @@ export function RideMap(props: RideMapProps) {
         originWhitelist={['*']}
         onMessage={(e) => {
           const next = onMapMessage(e.nativeEvent.data, props, setReady);
-          if (next !== undefined) setError(next);
+
+          if (next === null) {
+            setError(null);
+          } else if (next !== undefined) {
+            if (next.startsWith('Map tiles failed')) {
+              setError(t('mapTilesError'));
+            } else if (next.startsWith('Map failed to start')) {
+              setError(t('mapStartError'));
+            } else {
+              setError(t('mapLoadError'));
+            }
+          }
         }}
-        onError={() => setError('Could not load the map')}
+        onError={() => setError(t('mapLoadError'))}
         style={StyleSheet.absoluteFill}
         scrollEnabled={false}
         overScrollMode="never"
         setSupportMultipleWindows={false}
       />
-      <MapOverlays picking={!!props.onCenterChange} pinLabel={props.pinLabel} error={error} />
+      <MapOverlays
+        picking={!!props.onCenterChange}
+        pinLabel={props.pinLabel}
+        error={error}
+      />
     </View>
   );
 }

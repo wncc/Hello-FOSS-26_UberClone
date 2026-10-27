@@ -4,10 +4,12 @@ import { StatusBar } from 'expo-status-bar';
 import { Loading } from '@/components/ui';
 import { APP_VARIANT } from '@/lib/config';
 import { SessionProvider, useSession } from '@/lib/session';
+import { LanguageProvider, useLanguage } from '@/lib/i18n';
 
 function RootStack() {
   const { ready, user } = useSession();
-  if (!ready) return <Loading />;
+  const { ready: languageReady } = useLanguage();
+  if (!ready || !languageReady) return <Loading />;
   const signedIn = !!user;
   const named = signedIn && !!user.name;
   return (
@@ -31,9 +33,11 @@ function RootStack() {
 
 export default function RootLayout() {
   return (
-    <SessionProvider>
-      <StatusBar style="dark" />
-      <RootStack />
-    </SessionProvider>
+    <LanguageProvider>
+      <SessionProvider>
+        <StatusBar style="dark" />
+        <RootStack />
+      </SessionProvider>
+    </LanguageProvider>
   );
 }

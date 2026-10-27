@@ -24,6 +24,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           : 'Your location is used to set your pickup point.',
       },
     ],
+    [
+      'expo-localization',
+      {
+        supportedLocales: {
+          ios: ['en', 'hi', 'mr'],
+          android: ['en', 'hi', 'mr'],
+        },
+      },
+    ],
   ],
   extra: { ...config.extra, variant },
 });

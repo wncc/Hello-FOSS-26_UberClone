@@ -1,5 +1,6 @@
 import type {
-  DriverProfile, EstimateOption, LatLng, Offer, Place, Ride, RideRoute, Tokens, User, VehicleType,
+  DriverProfile, EstimateOption, LatLng, Offer, Place, PlaceSearchResult,
+  Ride, RideRoute, Tokens, User, VehicleType,
 } from './types';
 
 export class ApiError extends Error {
@@ -56,6 +57,21 @@ export class Api {
   updateName = (name: string) => this.request<User>('PATCH', '/me', { name });
 
   // rider
+  
+  // rider
+  searchPlaces = (query: string, near?: LatLng) => {
+    const params = new URLSearchParams({ q: query });
+
+    if (near) {
+      params.set('near', `${near.lat},${near.lng}`);
+    }
+
+    return this.request<PlaceSearchResult[]>(
+      'GET',
+      `/places/search?${params.toString()}`,
+    );
+  };
+
   estimate = (pickup: Place, drop: Place) =>
     this.request<{ options: EstimateOption[] }>('POST', '/rides/estimate', { pickup, drop });
   book = (pickup: Place, drop: Place, vehicle_type: VehicleType) =>
@@ -89,3 +105,4 @@ function errorMessage(data: unknown, status: number): string {
   if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);   // FastAPI validation errors
   return `Request failed (${status})`;
 }
+

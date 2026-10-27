@@ -4,6 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 from .conftest import Actor, driver, rider, tick
 
+from fastapi.testclient import TestClient
+
+from backend.app.main import create_app
+from backend.app.config import Settings
+from backend.app.services.place_search import PlaceResult
+
 PICKUP = {"lat": 12.9716, "lng": 77.5946, "address": "MG Road"}
 DROP = {"lat": 12.9352, "lng": 77.6245, "address": "Koramangala"}
 
@@ -298,3 +304,43 @@ def test_routes_follow_the_roads(make_client):
     far = {"lat": 13.5, "lng": 77.6}                                    # nowhere near the mapped roads
     res = r.post("/rides/estimate", {"pickup": pickup, "drop": far})
     assert res.status_code == 422 and "outside" in res.json()["detail"]
+
+# test for search_places
+
+
+def test_places_search_endpoint_uses_fake_provider(tmp_path):
+    class FakeSearchService:
+        async def search(self, query, near=None):
+            return [
+                PlaceResult(
+                    name="Dadar Station",
+                    address="Dadar, Mumbai",
+                    lat=19.0176,
+                    lng=72.8562,
+                )
+            ]
+
+    settings = Settings(
+        env="test",
+        database_url=f"sqlite+aiosqlite:///{tmp_path}/places.db",
+        run_matching_loop=False,
+        roads_path=None,
+    )
+    app = create_app(settings)
+    app.state.place_search = FakeSearchService()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/places/search",
+            params={"q": "Dadar station", "near": "19.0176,72.8562"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "name": "Dadar Station",
+            "address": "Dadar, Mumbai",
+            "lat": 19.0176,
+            "lng": 72.8562,
+        }
+    ]

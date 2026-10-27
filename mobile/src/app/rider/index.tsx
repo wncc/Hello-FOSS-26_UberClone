@@ -1,15 +1,16 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { RideMap } from '@/components/RideMap';
 import { Body, Button, ErrorText, Row, Sheet, colors, space } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, VEHICLE_LABEL, VEHICLE_ORDER, formatDistance, formatDuration, formatFare, shortAddress } from '@/lib/format';
 import { DEFAULT_CENTER, addressLabel, useCurrentPosition } from '@/lib/location';
 import { useSession } from '@/lib/session';
-import type { EstimateOption, LatLng, Place, VehicleType } from '@/lib/types';
+import type {
+  EstimateOption, LatLng, Place, PlaceSearchResult, VehicleType,
+} from '@/lib/types';
 
 type Step = 'pickup' | 'drop' | 'choose';
 const SHEET_HEIGHT = 300;
@@ -31,7 +32,13 @@ export default function RiderHome() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const labelRequest = useRef(0);
-
+  const selectedPlaceLabel = useRef<LatLng | null>(null);
+  const [searchText, setSearchText] = useState('');
+  const [suggestions, setSuggestions] = useState<PlaceSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [recentPlaces, setRecentPlaces] = useState<PlaceSearchResult[]>([]);
+  const searchRequest = useRef(0);
   // Resume an ongoing ride (e.g. app restarted mid-trip).
   useFocusEffect(useCallback(() => {
     api.activeRide().then((ride) => ride && router.replace(`/rider/ride/${ride.id}`)).catch(() => {});
@@ -42,13 +49,94 @@ export default function RiderHome() {
     if (step === 'choose') return;
     const id = ++labelRequest.current;
     const t = setTimeout(async () => {
-      const text = await addressLabel(center);
-      if (id === labelRequest.current) setLabel(text);
+     if (
+  selectedPlaceLabel.current?.lat === center.lat &&
+  selectedPlaceLabel.current?.lng === center.lng
+) {
+  return;
+}
+
+const text = await addressLabel(center);
+if (id === labelRequest.current) setLabel(text);
     }, 500);
     return () => clearTimeout(t);
   }, [center, step]);
 
+  
+useEffect(() => {
+  const query = searchText.trim();
+  const requestId = ++searchRequest.current;
+
+  if (step === 'choose' || query.length < 2) {
+    setSuggestions([]);
+    setSearching(false);
+    setSearchError(null);
+    return;
+  }
+
+  const timer = setTimeout(async () => {
+    setSearching(true);
+    setSearchError(null);
+
+    try {
+      const results = await api.searchPlaces(query, center);
+      if (requestId === searchRequest.current) {
+        setSuggestions(results);
+      }
+    } catch {
+      if (requestId === searchRequest.current) {
+        setSuggestions([]);
+        setSearchError(
+          'Place search is unavailable. You can still move the map pin.',
+        );
+      }
+    } finally {
+      if (requestId === searchRequest.current) {
+        setSearching(false);
+      }
+    }
+  }, 300);
+
+  return () => clearTimeout(timer);
+}, [api, searchText, center, step]);
+
+
   const here: Place = { lat: center.lat, lng: center.lng, address: label };
+
+  
+function selectPlace(place: PlaceSearchResult) {
+  const selectedPlace: Place = {
+    lat: place.lat,
+    lng: place.lng,
+    address: place.address,
+  };
+
+
+  selectedPlaceLabel.current = { lat: place.lat, lng: place.lng };
+  labelRequest.current += 1;
+
+  setCenter({ lat: place.lat, lng: place.lng });
+  setLabel(place.address);
+  setSearchText(place.name);
+  setSuggestions([]);
+  setSearchError(null);
+  setRecenterTo({ lat: place.lat, lng: place.lng });
+
+  setRecentPlaces((previous) => [
+    place,
+    ...previous.filter(
+      (recent) =>
+        recent.lat !== place.lat || recent.lng !== place.lng,
+    ),
+  ].slice(0, 5));
+
+  if (step === 'pickup') {
+    setPickup(selectedPlace);
+  } else if (step === 'drop') {
+    setDrop(selectedPlace);
+  }
+}
+
 
   async function confirmPickup() {
     setPickup(here);
@@ -146,7 +234,63 @@ export default function RiderHome() {
         ) : (
           <>
             <Text style={styles.optionSub}>{step === 'pickup' ? 'PICKUP' : 'DROP'}</Text>
-            <Body numberOfLines={2}>{shortAddress(center.lat, center.lng, label)}</Body>
+            
+            <View style={styles.searchContainer}>
+              <TextInput
+                value={searchText}
+                onChangeText={setSearchText}
+                placeholder={`Search ${step === 'pickup' ? 'pickup' : 'drop'} place`}
+                placeholderTextColor={colors.muted}
+                style={styles.searchInput}
+                accessibilityLabel={`Search ${step} place`}
+                returnKeyType="search"
+              />
+
+              {searching ? (
+                <Text style={styles.searchMessage}>Searching places...</Text>
+              ) : null}
+
+              {searchError ? (
+                <Text style={styles.searchError}>{searchError}</Text>
+              ) : null}
+
+              {!searching && !searchError && searchText.trim().length >= 2 &&
+              suggestions.length === 0 ? (
+                <Text style={styles.searchMessage}>No matching places found.</Text>
+              ) : null}
+
+              {suggestions.map((place, index) => (
+                <Pressable
+                  key={`${place.lat},${place.lng},${index}`}
+                  onPress={() => selectPlace(place)}
+                  style={styles.suggestion}
+                >
+                  <Text style={styles.suggestionName}>{place.name}</Text>
+                  <Text style={styles.suggestionAddress}>{place.address}</Text>
+                </Pressable>
+              ))}
+
+              {recentPlaces.length > 0 ? (
+                <>
+                  <Text style={styles.recentHeading}>Recent places</Text>
+                  {recentPlaces.map((place, index) => (
+                    <Pressable
+                      key={`recent-${place.lat},${place.lng},${index}`}
+                      onPress={() => selectPlace(place)}
+                      style={styles.suggestion}
+                    >
+                      <Text style={styles.suggestionName}>{place.name}</Text>
+                      <Text style={styles.suggestionAddress}>{place.address}</Text>
+                    </Pressable>
+                  ))}
+                </>
+              ) : null}
+            </View>
+
+            <Body numberOfLines={2}>
+            {shortAddress(center.lat, center.lng, label)}
+            
+            </Body>
             <Body muted>Move the map to place the pin.</Body>
             {step === 'pickup' && locationError ? (
               <Row style={{ justifyContent: 'space-between' }}>
@@ -186,4 +330,51 @@ const styles = StyleSheet.create({
   optionSelected: { borderColor: colors.primary, backgroundColor: colors.surface },
   optionTitle: { fontSize: 17, fontWeight: '600', color: colors.text },
   optionSub: { fontSize: 13, color: colors.muted },
+  
+  searchContainer: {
+    gap: 6,
+  },
+  searchInput: {
+    backgroundColor: colors.surface,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.muted,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+  },
+  searchMessage: {
+    color: colors.muted,
+    fontSize: 13,
+    paddingVertical: 4,
+  },
+  searchError: {
+    color: '#b42318',
+    fontSize: 13,
+    paddingVertical: 4,
+  },
+  suggestion: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: colors.surface,
+  },
+  suggestionName: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  suggestionAddress: {
+    color: colors.muted,
+    fontSize: 12,
+  },
+  recentHeading: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+
+
 });

@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .api import admin, auth, drivers, realtime, rides, users
+from .api import admin, auth, drivers, places, realtime, rides, users
 from .config import Settings, settings as default_settings
 from .context import AppContext
 from .db import Database
@@ -22,6 +22,7 @@ from .models import Ride
 from .services.dispatch import Dispatcher
 from .services.realtime import Hub
 from .services.routes import RouteService, load_route_service
+from .services.place_search import PhotonProvider, PlaceSearchService
 
 log = logging.getLogger(__name__)
 
@@ -55,12 +56,16 @@ def create_app(settings: Settings | None = None, routes: RouteService | None = N
     app.state.dispatcher = dispatcher
     app.add_middleware(CORSMiddleware, allow_origins=["*"] if settings.is_dev else [],
                        allow_methods=["*"], allow_headers=["*"])
+    app.state.place_search = PlaceSearchService(
+        PhotonProvider(user_agent="UberClone/0.1 (development place search)")   
+    )
+
 
     @app.exception_handler(DomainError)
     async def domain_error(_: Request, exc: DomainError) -> JSONResponse:
         return JSONResponse({"detail": exc.message}, status_code=exc.status)
 
-    for module in (auth, users, drivers, rides, admin, realtime):
+    for module in (auth, users, drivers, rides, admin, realtime, places):
         app.include_router(module.router)
 
     @app.get("/health", tags=["ops"])

@@ -136,3 +136,8 @@ export type ServerEvent =
   | { event: 'error'; data: { message: string } };
 
 export type EventName = ServerEvent['event'];
+
+export interface PlaceSearchResult extends LatLng {
+  name: string;
+  address: string;
+}

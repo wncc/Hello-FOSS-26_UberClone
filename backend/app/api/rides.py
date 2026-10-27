@@ -14,7 +14,7 @@ from ..deps import current_user, get_ctx, get_session, require
 from ..errors import DomainError
 from ..models import DriverProfile, DriverStatus, Ride, RideStatus, Role, User
 from ..schemas import (
-    CancelIn, EstimateIn, EstimateOption, EstimateOut, RatingIn, RideCreateIn, RideOut, RouteOut, StartIn,
+    CancelIn, EstimateIn, EstimateOption, EstimateOut, RatingIn, RideCreateIn, RideOut, RouteOut, StartIn, ShareOut, SosIn, SosOut, PublicTrackOut,
 )
 from ..services import rides as svc
 from ..services.pricing import fare_paise
@@ -143,4 +143,21 @@ async def rate(ride_id: str, body: RatingIn, user: User = Depends(current_user),
                session: AsyncSession = Depends(get_session)) -> dict:
     rating = await svc.rate(session, ride_id, user, body.stars, body.comment)
     return {"id": rating.id, "stars": rating.stars}
+
+@router.post("/{ride_id}/share", response_model=ShareOut)
+async def share_ride(ride_id: str, user: User = Depends(current_user), ctx: AppContext = Depends(get_ctx),
+                     session: AsyncSession = Depends(get_session)) -> ShareOut:
+    """Generate a secure public tracking share link for an active ride."""
+    # Use PUBLIC_BASE_URL from settings if configured, otherwise fallback to localhost:8000
+    base_url = getattr(ctx.settings, "public_base_url", "http://localhost:8000")
+    result = await svc.create_ride_share(session, ride_id, user, base_url)
+    return ShareOut(**result)
+
+
+@router.post("/{ride_id}/sos", response_model=SosOut, status_code=201)
+async def trigger_sos(ride_id: str, body: SosIn, user: User = Depends(current_user), ctx: AppContext = Depends(get_ctx),
+                      session: AsyncSession = Depends(get_session)) -> SosOut:
+    """Record an emergency SOS event during an active ride."""
+    sos = await svc.record_sos_event(session, ride_id, user, body.lat, body.lng)
+    return SosOut(id=sos.id, ride_id=sos.ride_id, lat=sos.lat, lng=sos.lng, created_at=sos.created_at)
 

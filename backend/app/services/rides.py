@@ -8,6 +8,9 @@ Matching itself (who gets pinged, who wins) happens in dispatch.py.
 """
 from __future__ import annotations
 
+import hashlib
+import base64
+
 import secrets
 from datetime import datetime, timezone
 
@@ -20,9 +23,9 @@ from ..context import AppContext
 from ..errors import DomainError, conflict, forbidden, not_found
 from ..models import (
     ACTIVE_RIDE_STATUSES, DRIVER_BUSY_STATUSES, DriverProfile, DriverStatus, OfferStatus, PaymentMethod,
-    PaymentStatus, Rating, Ride, RideOffer, RideStatus, Role, User,
+    PaymentStatus, Rating, Ride, RideOffer, RideStatus, Role, User, RideShare, SosEvent,
 )
-from ..schemas import DriverInfoOut, PartyOut, PlaceIn, RideCreateIn, RideOut
+from ..schemas import DriverInfoOut, PartyOut, PlaceIn, RideCreateIn, RideOut, PublicTrackOut
 from .pricing import fare_paise
 
 NO_ROUTE_MESSAGE = "No road route found. The pickup or drop may be outside the area we have maps for."
@@ -290,3 +293,127 @@ async def approved_driver(session: AsyncSession, user: User) -> DriverProfile:
     if profile.status is not DriverStatus.APPROVED:
         raise forbidden(f"driver account is {profile.status.value}")
     return profile
+
+# --------------------------------------------------------------------------- #
+# Share Trip & SOS Services
+# --------------------------------------------------------------------------- #
+
+async def create_ride_share(session: AsyncSession, ride_id: str, user: User, public_base_url: str) -> dict:
+    ride = await session.get(Ride, ride_id)
+    if ride is None or ride.rider_id != user.id:
+        raise not_found("ride")
+    if ride.status not in ACTIVE_RIDE_STATUSES:
+        raise conflict(f"cannot share trip with status {ride.status.value}")
+    
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    
+    share = RideShare(ride_id=ride.id, token_hash=token_hash)
+    session.add(share)
+    await session.commit()
+    
+    return {
+        "token": raw_token,
+        "url": f"{public_base_url.rstrip('/')}/track/{raw_token}",
+        "expires_at": share.expires_at,
+    }
+
+
+async def get_public_tracking_data(session: AsyncSession, token: str) -> PublicTrackOut:
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    share = await session.scalar(select(RideShare).where(RideShare.token_hash == token_hash))
+    if share is None:
+        raise not_found("tracking link")
+    
+    ride = await session.get(Ride, share.ride_id)
+    if ride is None:
+        raise not_found("ride")
+    
+    # Expire link with HTTP 410 Gone if ride is completed or cancelled
+    if ride.status in (RideStatus.COMPLETED, RideStatus.CANCELLED):
+        raise DomainError(410, "Trip has ended")
+        
+    driver_name = None
+    vehicle_type = VehicleType(ride.vehicle_type)
+    vehicle_number = None
+    vehicle_model = None
+    driver_lat = None
+    driver_lng = None
+    is_live = False
+    source = "pickup_fallback"
+    note = "Driver location unavailable — showing pickup location as last known position."
+    updated_at = ride.requested_at
+    
+    if ride.driver_id:
+        driver = await session.get(User, ride.driver_id)
+        profile = await session.get(DriverProfile, ride.driver_id)
+        if driver:
+            driver_name = driver.name
+        if profile:
+            vehicle_type = VehicleType(profile.vehicle_type)
+            vehicle_number = profile.vehicle_number
+            vehicle_model = profile.vehicle_model
+            
+            # Tier 1: Live driver profile coordinates
+            if profile.lat is not None and profile.lng is not None:
+                driver_lat, driver_lng = profile.lat, profile.lng
+                is_live = True
+                source = "live"
+                note = None
+                updated_at = profile.location_at
+                
+    # Tier 2: Last known breadcrumb from LocationPing if live profile is missing
+    if not is_live and ride.driver_id:
+        from ..models import LocationPing
+        last_ping = await session.scalar(
+            select(LocationPing)
+            .where(LocationPing.driver_id == ride.driver_id, LocationPing.ride_id == ride.id)
+            .order_by(LocationPing.recorded_at.desc())
+            .limit(1)
+        )
+        if last_ping:
+            driver_lat, driver_lng = last_ping.lat, last_ping.lng
+            source = "last_known"
+            note = "Live GPS unavailable — showing driver's last known location."
+            updated_at = last_ping.recorded_at
+
+    # Tier 3: Fallback to ride pickup coordinates if no driver GPS exists yet
+    if driver_lat is None or driver_lng is None:
+        driver_lat, driver_lng = ride.pickup_lat, ride.pickup_lng
+        
+    return PublicTrackOut(
+        status=ride.status,
+        driver_name=driver_name,
+        vehicle_type=vehicle_type,
+        vehicle_number=vehicle_number,
+        vehicle_model=vehicle_model,
+        driver_lat=driver_lat,
+        driver_lng=driver_lng,
+        is_live_location=is_live,
+        location_source=source,
+        location_note=note,
+        location_updated_at=updated_at,
+        pickup=PlaceIn(lat=ride.pickup_lat, lng=ride.pickup_lng, address=ride.pickup_address),
+        drop=PlaceIn(lat=ride.drop_lat, lng=ride.drop_lng, address=ride.drop_address),
+    )
+
+
+async def record_sos_event(session: AsyncSession, ride_id: str, user: User, lat: float | None, lng: float | None) -> SosEvent:
+    ride = await session.get(Ride, ride_id)
+    if ride is None or ride.rider_id != user.id:
+        raise not_found("ride")
+    if ride.status not in ACTIVE_RIDE_STATUSES:
+        raise conflict("cannot trigger SOS on an inactive ride")
+        
+    # Fallback to driver or ride coordinates if rider coords are missing
+    if lat is None or lng is None and ride.driver_id:
+        profile = await session.get(DriverProfile, ride.driver_id)
+        if profile and profile.lat is not None:
+            lat, lng = profile.lat, profile.lng
+    if lat is None or lng is None:
+        lat, lng = ride.pickup_lat, ride.pickup_lng
+        
+    sos = SosEvent(ride_id=ride.id, user_id=user.id, lat=lat, lng=lng)
+    session.add(sos)
+    await session.commit()
+    return sos

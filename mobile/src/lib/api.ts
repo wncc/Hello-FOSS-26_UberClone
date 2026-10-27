@@ -14,6 +14,20 @@ export interface TokenStore {
   refresh(): Promise<string | null>;
 }
 
+export interface RideShareResponse {
+  token: string;
+  url: string;
+  expires_at?: string;
+}
+
+export interface SOSEventResponse {
+  id: string;
+  ride_id: string;
+  lat: number;
+  lng: number;
+  created_at?: string;
+}
+
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH';
 
 export class Api {
@@ -81,7 +95,16 @@ export class Api {
   arrived = (id: string) => this.request<Ride>('POST', `/rides/${id}/arrived`);
   start = (id: string, pin: string) => this.request<Ride>('POST', `/rides/${id}/start`, { pin });
   complete = (id: string) => this.request<Ride>('POST', `/rides/${id}/complete`);
+
+  // Rider Safety Features
+  shareTrip = (id: string) => 
+    this.request<RideShareResponse>('POST', `/rides/${id}/share`);
+    
+  triggerSOS = (id: string, lat: number, lng: number) => 
+    this.request<SOSEventResponse>('POST', `/rides/${id}/sos`, { lat, lng });
 }
+
+
 
 function errorMessage(data: unknown, status: number): string {
   const detail = (data as { detail?: unknown } | null)?.detail;
@@ -89,3 +112,5 @@ function errorMessage(data: unknown, status: number): string {
   if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);   // FastAPI validation errors
   return `Request failed (${status})`;
 }
+
+

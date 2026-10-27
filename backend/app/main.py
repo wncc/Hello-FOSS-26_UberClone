@@ -22,6 +22,11 @@ from .models import Ride
 from .services.dispatch import Dispatcher
 from .services.realtime import Hub
 from .services.routes import RouteService, load_route_service
+from fastapi.responses import HTMLResponse
+from backend.app.services import rides as ride_svc
+from backend.app.deps import get_session
+from backend.app.schemas import PublicTrackOut
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +60,92 @@ def create_app(settings: Settings | None = None, routes: RouteService | None = N
     app.state.dispatcher = dispatcher
     app.add_middleware(CORSMiddleware, allow_origins=["*"] if settings.is_dev else [],
                        allow_methods=["*"], allow_headers=["*"])
+
+    PRIVACY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Robots-Tag": "noindex",
+    "Referrer-Policy": "no-referrer",
+    }
+
+    @app.get("/track/{token}/data", response_model=PublicTrackOut)
+    async def public_track_data(token: str, session: AsyncSession = Depends(get_session)):
+        """Public JSON endpoint polled by the tracking page every 5s."""
+        data = await ride_svc.get_public_tracking_data(session, token)
+        return data
+
+    @app.get("/track/{token}", response_class=HTMLResponse)
+    async def public_track_page(token: str):
+        """Self-contained Leaflet map view for shared trips."""
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <title>Live Trip Tracking | UberClone</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <style>
+            body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #fff; }}
+            #map {{ height: 100vh; width: 100vw; }}
+            .card {{ position: absolute; bottom: 20px; left: 20px; right: 20px; background: #1e1e1e; padding: 16px; border-radius: 12px; z-index: 1000; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
+            h3 {{ margin: 0 0 8px 0; font-size: 18px; color: #4caf50; }}
+            p {{ margin: 4px 0; font-size: 14px; color: #b0b0b0; }}
+            .badge {{ display: inline-block; padding: 4px 8px; border-radius: 4px; background: #333; font-size: 12px; margin-bottom: 8px; }}
+        </style>
+        </head>
+        <body>
+        <div id="map"></div>
+        <div class="card" id="info-card">
+            <span class="badge" id="status-badge">Loading trip status...</span>
+            <h3 id="driver-title">Driver: Locating...</h3>
+            <p id="vehicle-info">Vehicle: --</p>
+            <p id="location-note" style="color: #ff9800; font-size: 12px;"></p>
+        </div>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script>
+            const map = L.map('map').setView([19.0760, 72.8777], 13);
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }}).addTo(map);
+
+            let marker = null;
+
+            async function pollData() {{
+                try {{
+                    const res = await fetch('/track/{token}/data');
+                    if (res.status === 410) {{
+                        document.getElementById('status-badge').innerText = 'TRIP COMPLETED / ENDED';
+                        document.getElementById('status-badge').style.background = '#d32f2f';
+                        clearInterval(pollInterval);
+                        return;
+                    }}
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    
+                    document.getElementById('status-badge').innerText = 'Status: ' + data.status.toUpperCase();
+                    document.getElementById('driver-title').innerText = data.driver_name ? 'Driver: ' + data.driver_name : 'Waiting for driver assignment...';
+                    document.getElementById('vehicle-info').innerText = data.vehicle_number ? `Vehicle: ${{data.vehicle_number}} (${{data.vehicle_model || data.vehicle_type}})` : '';
+                    document.getElementById('location-note').innerText = data.location_note || '';
+
+                    const latlng = [data.driver_lat, data.driver_lng];
+                    if (!marker) {{
+                        marker = L.marker(latlng).addTo(map);
+                        map.setView(latlng, 15);
+                    }} else {{
+                        marker.setLatLng(latlng);
+                    }}
+                }} catch (e) {{
+                    console.error('Polling error:', e);
+                }}
+            }}
+
+            pollData();
+            const pollInterval = setInterval(pollData, 5000);
+        </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, headers=PRIVACY_HEADERS)
 
     @app.exception_handler(DomainError)
     async def domain_error(_: Request, exc: DomainError) -> JSONResponse:

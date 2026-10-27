@@ -186,5 +186,39 @@ class AdminMapOut(BaseModel):
     drivers: list[AdminMapDriverOut]
     rides: list[AdminMapRideOut]
 
+class ShareOut(BaseModel):
+    token: str
+    url: str
+    expires_at: datetime | None = None
+
+
+class SosIn(BaseModel):
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+
+
+class SosOut(BaseModel):
+    id: str
+    ride_id: str
+    lat: float | None
+    lng: float | None
+    created_at: datetime
+
+
+class PublicTrackOut(BaseModel):
+    status: RideStatus
+    driver_name: str | None = None
+    vehicle_type: VehicleType | None = None
+    vehicle_number: str | None = None
+    vehicle_model: str | None = None
+    driver_lat: float
+    driver_lng: float
+    is_live_location: bool = True
+    location_source: Literal["live", "last_known", "pickup_fallback"] = "live"
+    location_note: str | None = None
+    location_updated_at: datetime | None = None
+    pickup: PlaceIn
+    drop: PlaceIn
+
 
 TokenOut.model_rebuild()

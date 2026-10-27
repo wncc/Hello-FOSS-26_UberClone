@@ -198,3 +198,23 @@ class LocationPing(Base):
     speed_kmh: Mapped[float | None] = mapped_column(Float)
     heading: Mapped[float | None] = mapped_column(Float)
     recorded_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
+
+class RideShare(Base):
+    """Public share link token (stored as SHA-256 hash) for live trip tracking."""
+    __tablename__ = "ride_shares"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    ride_id: Mapped[str] = mapped_column(ForeignKey("rides.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class SosEvent(Base):
+    """Emergency SOS trigger recorded during an active ride."""
+    __tablename__ = "sos_events"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    ride_id: Mapped[str] = mapped_column(ForeignKey("rides.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    lat: Mapped[float | None] = mapped_column(Float)
+    lng: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RideMap } from '@/components/RideMap';
+import { SafetyActionsBar } from '@/components/SafetyActionBar';
 import { Body, Button, ErrorText, Loading, Row, Sheet, Title, colors, space } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, VEHICLE_LABEL, formatFare, isFinished, riderStatusText, shortAddress } from '@/lib/format';
@@ -54,6 +55,7 @@ export default function RiderRide() {
 
   const driverPos = ride.driver?.lat != null && ride.driver?.lng != null ? { lat: ride.driver.lat, lng: ride.driver.lng } : null;
   const cancellable = ['searching', 'driver_assigned', 'driver_arrived'].includes(ride.status);
+  const isActiveRide = ['searching', 'driver_assigned', 'driver_arrived', 'in_progress'].includes(ride.status);
 
   return (
     <View style={{ flex: 1 }}>
@@ -81,6 +83,11 @@ export default function RiderRide() {
         {ride.status === 'searching' ? <Body muted>Pinging {VEHICLE_LABEL[ride.vehicle_type].toLowerCase()} drivers near you…</Body> : null}
         {ride.status === 'driver_arrived' ? <Body>Share the PIN with your driver to start the trip.</Body> : null}
         {ride.status === 'in_progress' ? <Body muted>Heading to {shortAddress(ride.drop.lat, ride.drop.lng, ride.drop.address)}</Body> : null}
+
+        {/* Safety Actions: Share Trip & SOS */}
+        {['driver_assigned', 'driver_arrived', 'in_progress'].includes(ride.status) ? (
+          <SafetyActionsBar ride={ride} />
+        ) : null}
 
         {ride.status === 'completed' ? (
           <Completed ride={ride} />
@@ -110,7 +117,6 @@ function Completed({ ride }: { ride: Ride }) {
       if (stars) await api.rate(ride.id, stars);
       router.replace('/rider');
     } catch (e) {
-      // Already rated (e.g. on another device) is fine; anything else is shown.
       if (e instanceof ApiError && e.status === 409) router.replace('/rider');
       else setError(e instanceof ApiError ? e.message : 'Could not send rating');
       setBusy(false);

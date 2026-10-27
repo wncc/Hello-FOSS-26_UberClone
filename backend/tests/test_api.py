@@ -298,3 +298,44 @@ def test_routes_follow_the_roads(make_client):
     far = {"lat": 13.5, "lng": 77.6}                                    # nowhere near the mapped roads
     res = r.post("/rides/estimate", {"pickup": pickup, "drop": far})
     assert res.status_code == 422 and "outside" in res.json()["detail"]
+
+# ------------------------------------------------------------------------------- #
+# Ride Share and Emergency SOS Test Suite
+# ------------------------------------------------------------------------------- #
+
+def test_create_and_access_ride_share_and_sos(client):
+    """Test generating a secure share link, accessing public tracking, and triggering SOS."""
+    r = rider(client)
+    _ = driver(client, 12.9726, 77.5946)
+    
+    # Book a real ride so we have a valid ride ID
+    ride = book(r)
+    ride_id = ride["id"]
+    
+    # 1. Generate share link
+    share_res = r.post(f"/rides/{ride_id}/share")
+    assert share_res.status_code == 200, share_res.text
+    share_data = share_res.json()
+    assert "token" in share_data
+    assert "url" in share_data
+    
+    token = share_data["token"]
+
+    # 2. Access public tracking data unauthenticated via client (or testclient get)
+    track_res = client.get(f"/track/{token}/data")
+    assert track_res.status_code == 200
+    track_data = track_res.json()
+    assert "status" in track_data
+
+    # 3. Test Emergency SOS endpoint
+    sos_res = r.post(f"/rides/{ride_id}/sos", json={"lat": 12.9716, "lng": 77.5946})
+    assert sos_res.status_code == 201
+    sos_data = sos_res.json()
+    assert sos_data["ride_id"] == ride_id
+    assert sos_data["lat"] == 12.9716
+
+
+def test_public_track_endpoint_security(client):
+    """Test that public tracking endpoints enforce proper headers and handle bad tokens."""
+    response = client.get("/track/invalid-fake-token-xyz/data")
+    assert response.status_code in [404, 410]

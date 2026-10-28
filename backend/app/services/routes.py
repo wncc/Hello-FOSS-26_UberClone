@@ -26,6 +26,7 @@ class RouteEstimate:
     distance_m: int
     duration_s: int
     geometry: list[LatLng] = field(default_factory=list)
+    segment_ids: list[str] = field(default_factory=list)
 
 
 class RouteService:
@@ -66,7 +67,12 @@ class RouteService:
             geometry = edges[seg].geometry
             points.extend(geometry[1:] if points and geometry and points[-1] == geometry[0] else geometry)
         points.append(dest)
-        return RouteEstimate(int(result.distance_m), int(result.eta_s), _thin(points))
+        return RouteEstimate(
+            int(result.distance_m),
+            int(result.eta_s),
+            _thin(points),
+            list(result.segments),
+        )
 
 
 def _thin(points: list[LatLng]) -> list[LatLng]:

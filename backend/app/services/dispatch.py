@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -22,9 +23,10 @@ from routing import VehicleType
 
 from ..context import AppContext
 from ..models import (
-    DRIVER_BUSY_STATUSES, DriverProfile, DriverStatus, OfferStatus, Ride, RideOffer, RideStatus, User,
+    DRIVER_BUSY_STATUSES, DriverProfile, DriverStatus, OfferStatus, PlannedRoute, Ride, RideOffer, RideStatus, User,
 )
 from .rides import ride_summary
+from routing import VehicleType
 
 log = logging.getLogger(__name__)
 LIVE = (OfferStatus.PINGED, OfferStatus.ACCEPTED)
@@ -143,6 +145,40 @@ class Dispatcher:
                 continue
             ride, winner = rides[r["id"]], r["driverId"]
             ride.status, ride.driver_id, ride.assigned_at = RideStatus.DRIVER_ASSIGNED, winner, now
+            profile = profiles[winner]
+
+            # Planned routes are only needed for GPS road learning.
+            if self.ctx.settings.run_gps_learning_loop:
+                estimate = self.ctx.routes.estimate(
+                    (profile.lat, profile.lng),
+                    (ride.pickup_lat, ride.pickup_lng),
+                    VehicleType(ride.vehicle_type),
+                    depart_at=now,
+                )
+
+                planned = await session.scalar(
+                    select(PlannedRoute).where(
+                        PlannedRoute.ride_id == ride.id,
+                        PlannedRoute.phase == "approach",
+                    )
+                )
+
+                if estimate is not None and estimate.segment_ids:
+                    if planned is None:
+                        planned = PlannedRoute(
+                            ride_id=ride.id,
+                            driver_id=winner,
+                            phase="approach",
+                            segment_ids=json.dumps(estimate.segment_ids),
+                        )
+                        session.add(planned)
+                    else:
+                        planned.driver_id = winner
+                        planned.segment_ids = json.dumps(estimate.segment_ids)
+                        planned.created_at = now
+                elif planned is not None:
+                    await session.delete(planned)
+
             for o in offers:
                 if o.ride_id != ride.id or o.status not in LIVE:
                     continue

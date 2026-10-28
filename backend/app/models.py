@@ -198,3 +198,95 @@ class LocationPing(Base):
     speed_kmh: Mapped[float | None] = mapped_column(Float)
     heading: Mapped[float | None] = mapped_column(Float)
     recorded_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
+
+class PlannedRoute(Base):
+    """Road segments planned for a driver's approach or trip."""
+    __tablename__ = "planned_routes"
+    __table_args__ = (
+        UniqueConstraint("ride_id", "phase"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=new_id
+    )
+    ride_id: Mapped[str] = mapped_column(
+        ForeignKey("rides.id"), index=True
+    )
+    driver_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id"), index=True
+    )
+    phase: Mapped[str] = mapped_column(String(16))
+    segment_ids: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utcnow
+    )
+
+class GPSProcessedRide(Base):
+    """Records completed rides already analyzed for GPS learning."""
+
+    __tablename__ = "gps_processed_rides"
+    __table_args__ = (
+        UniqueConstraint("ride_id", "phase"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=new_id
+    )
+    ride_id: Mapped[str] = mapped_column(
+        ForeignKey("rides.id"), index=True
+    )
+    driver_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id")
+    )
+    phase: Mapped[str] = mapped_column(
+        String(16), default="trip"
+    )
+    vehicle_type: Mapped[str] = mapped_column(String(16))
+    sample_count: Mapped[int] = mapped_column(
+        Integer, default=0
+    )
+    processed_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utcnow
+    )
+
+
+class GPSRoadSpeedSample(Base):
+    """Validated road-speed observation extracted from driver GPS."""
+
+    __tablename__ = "gps_road_speed_samples"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=new_id
+    )
+    ride_id: Mapped[str] = mapped_column(
+        ForeignKey("rides.id"), index=True
+    )
+    driver_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id")
+    )
+    segment_id: Mapped[str] = mapped_column(String(128), index=True)
+    vehicle_type: Mapped[str] = mapped_column(String(16))
+    speed_kmh: Mapped[float] = mapped_column(Float)
+    observed_at: Mapped[datetime] = mapped_column(
+        UTCDateTime()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utcnow
+    )
+
+
+
+class GPSRoadExposure(Base):
+    """Candidate route-follow/avoid evidence; never directly modifies routing."""
+    __tablename__ = "gps_road_exposures"
+    __table_args__ = (UniqueConstraint("ride_id", "phase", "segment_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    ride_id: Mapped[str] = mapped_column(ForeignKey("rides.id"), index=True)
+    driver_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    phase: Mapped[str] = mapped_column(String(16))
+    segment_id: Mapped[str] = mapped_column(String(128), index=True)
+    vehicle_type: Mapped[str] = mapped_column(String(16))
+    followed: Mapped[bool] = mapped_column(Boolean)
+    observed_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

@@ -1,0 +1,12 @@
+﻿.git
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+*.db
+data
+mobile/node_modules
+mobile/.expo
+e2e/.build
+e2e/report

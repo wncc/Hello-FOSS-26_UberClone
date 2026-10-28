@@ -258,3 +258,45 @@ On the phone, **Log out** clears the saved login.
 - **Payment is cash only.**
 - **Driver location updates only while the driver app is open**, because background GPS needs a development build.
 - **Pickup and drop are chosen by dragging the map.** There's no address search yet.
+
+---
+
+## I. Run the backend with Docker
+
+Use this option if Docker Desktop is installed and running. Docker builds the backend image and prepares the Mumbai road data automatically.
+
+1. **Start the backend and road-data service:**
+
+   ```powershell
+   docker compose up --build
+   ```
+
+   Wait for `Application startup complete`. On the first run, downloading and importing road data can take several minutes. The generated road data is stored in a Docker volume, so it is reused on later runs.
+
+2. **Check the backend.** Open another PowerShell window:
+
+   ```powershell
+   curl.exe http://localhost:8000/health
+   ```
+
+   The response should be `{"status":"ok"}`.
+
+3. **Connect a phone on the same Wi-Fi.** Find the laptop's IPv4 address using:
+
+   ```powershell
+   ipconfig
+   ```
+
+   Open `http://<laptop-ip>:8000/health` in the phone's browser, replacing `<laptop-ip>` with the laptop's IPv4 address. If it cannot connect, check the Windows firewall and ensure both devices are on the same Wi-Fi.
+
+4. **Run the mobile app.** In another terminal, follow section B, C, or D to start the rider or driver app. The app must use the laptop's reachable IP address, not `localhost`, when connecting from a phone.
+
+5. **Stop the Docker services.** Press `Ctrl+C`, or run:
+
+   ```powershell
+   docker compose down
+   ```
+
+   This preserves the road-data and SQLite database volumes. The next `docker compose up --build` reuses the saved road data.
+
+   **Warning:** `docker compose down -v` deletes the Docker volumes, including saved road data and the database. Use it only when you intentionally want to reset them.

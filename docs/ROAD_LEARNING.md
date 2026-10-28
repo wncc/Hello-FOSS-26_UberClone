@@ -110,10 +110,43 @@ svc.speed_model.diagnose(edges[seg])                             # CONDITION / T
 svc.health[seg].suspected_map_error
 ```
 
-## 5. Limitations
+## 5. Learning from driver GPS (the backend worker)
+
+`backend/app/services/gps_worker.py` turns stored driver GPS pings into the telemetry from section 3 and applies it to the live router.
+
+**Collect.** Driver location pings are stored per ride. When a ride is `COMPLETED`, its **trip phase** (start to completion) becomes eligible for learning.
+
+**Validate.** Pings are matched to roads in [routing/map_matching.py](../routing/map_matching.py). A grid index (`SegmentIndex`) means each ping checks only nearby roads, not every road. Matching runs in a worker thread (`asyncio.to_thread`) so it never blocks the event loop.
+- A ping must be within 30 m of one road. Ambiguous parallel roads that are not connected are rejected.
+- A speed sample needs an almost complete traversal (first and last ping within 10% of the road ends), no backwards movement, gaps of at most 60 s between pings, a total duration of at most 300 s, and a speed of at most 130 km/h.
+- Speed = distance actually covered between the first and last ping, divided by the time between them. It is **not** the full segment length divided by a shorter time, which read up to 25% too high.
+- A followed road needs at least 3 pings with no gap over 60 s. A road is recorded as avoided only with strong evidence: a connected bypass and a later rejoin of the planned route. A nearest-road mismatch alone is not proof of avoidance.
+
+**Persist.** One database transaction per ride writes `gps_road_speed_samples`, `gps_road_exposures` and a `gps_processed_rides` marker (unique per ride and phase). A ride is therefore never counted twice, even across restarts. The tables are created by `backend/migrations/versions/20261027_0002_gps_learning.py` (`alembic upgrade head`).
+
+**Failed rides.** A ride that fails gets **no** marker, because it might succeed later. It is retried with backoff (60 s, doubling up to 1 hour) and given up on after 5 attempts per process run. While it waits it is left out of the query, so it cannot starve newer rides. Rides with no usable GPS data are marked processed with zero samples.
+
+**Apply to live routing.** After each cycle the worker loads recent samples and exposures. For each vehicle service it keeps those inside the policy window (`window_days`, default 60) that belong to known road segments, then calls `service.refresh_telemetry(speeds, exposures, now)`. This feeds the models from sections 1 and 2. It runs even when only exposures exist.
+
+**Configure.**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `RUN_GPS_LEARNING_LOOP` | `false` | Starts the worker. It also needs road data loaded |
+| `gps_learning_tick_seconds` | `900` | Time between cycles (15 minutes) |
+
+**Test.**
+
+```
+python -m pytest tests/test_map_matching.py backend/tests/test_gps_worker.py backend/tests/test_migrations.py -q
+```
+
+## 6. Limitations
 
 - **Route choice uses one time bucket.** Routing applies the departure bucket to the whole trip, while the ETA does propagate the clock.
 - **Segment-specific traffic (`u`) isn't used in routing yet.** It feeds only the ETA, because per-segment, per-bucket rules are expensive to send in each GraphHopper request.
 - **Slow recovery after repairs.** Condition changes are tracked only through the 28-day decay. Change-point detection on quiet-hour observations would react within days.
 - **Traffic groups are city-wide road classes.** A primary road in the centre and one on the outskirts share a single traffic profile until zones are added.
 - **GraphHopper speed setting needs checking.** Uniform speed on the server relies on `{"if": "true", "limit_to": "30"}` setting every road to 30 km/h. Confirm this on the deployed GraphHopper version, or use `car_average_speed` once [issue 001](issues/001-eta-approximation.md) is done.
+- **GPS learning only uses the trip phase.** The approach phase (driver to pickup) is not learned yet.
+- **Retry state is in memory.** Failed-ride attempt counts reset when the backend restarts.

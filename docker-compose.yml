@@ -1,0 +1,49 @@
+﻿services:
+  roads:
+    build: .
+    command:
+      - sh
+      - -c
+      - |
+        if [ -s data/roads.pkl ]; then
+          echo "Road data already exists; skipping download and import."
+        else
+          if [ ! -s data/western-zone-latest.osm.pbf ]; then
+            echo "Downloading Mumbai-region OSM extract..."
+            curl -fL --retry 3 \
+              -o data/western-zone-latest.osm.pbf.tmp \
+              https://download.geofabrik.de/asia/india/western-zone-latest.osm.pbf
+            mv data/western-zone-latest.osm.pbf.tmp data/western-zone-latest.osm.pbf
+          fi
+          echo "Building road network..."
+          python -m routing.osm_import \
+            data/western-zone-latest.osm.pbf \
+            --out data/roads.pkl.tmp \
+            --bbox 18.89,72.77,19.30,73.05
+          mv data/roads.pkl.tmp data/roads.pkl
+          echo "Road data is ready."
+        fi
+    volumes:
+      - roads_data:/app/data
+    restart: "no"
+
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: sqlite+aiosqlite:////app/state/uberclone.db
+      ROADS_PATH: /app/data/roads.pkl
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-in-production-0123456789}
+    volumes:
+      - roads_data:/app/data
+      - sqlite_data:/app/state
+    depends_on:
+      roads:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  roads_data:
+  sqlite_data:

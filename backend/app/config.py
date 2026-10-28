@@ -32,6 +32,10 @@ class Settings:
     auto_approve_drivers: bool = field(default_factory=lambda: _bool("AUTO_APPROVE_DRIVERS", True))
     run_matching_loop: bool = field(default_factory=lambda: _bool("RUN_MATCHING_LOOP", True))
     matching_tick_seconds: float = 3.0
+    run_gps_learning_loop: bool = field(
+        default_factory=lambda: _bool("RUN_GPS_LEARNING_LOOP", False)
+    )
+    gps_learning_tick_seconds: float = 900.0
     ping_timeout_seconds: float = 20.0         # driver must answer a ping within this
     admin_phones: tuple[str, ...] = field(default_factory=lambda: tuple(
         p.strip() for p in os.environ.get("ADMIN_PHONES", "").split(",") if p.strip()))

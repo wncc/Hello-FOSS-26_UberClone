@@ -22,6 +22,7 @@ from .models import Ride
 from .services.dispatch import Dispatcher
 from .services.realtime import Hub
 from .services.routes import RouteService, load_route_service
+from .services.gps_worker import GPSLearningWorker
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ def create_app(settings: Settings | None = None, routes: RouteService | None = N
     ctx = AppContext(settings=settings, db=Database(settings.database_url), hub=Hub(),
                      routes=routes or RouteService())
     dispatcher = Dispatcher(ctx)
+    gps_worker = GPSLearningWorker(ctx)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -46,13 +48,17 @@ def create_app(settings: Settings | None = None, routes: RouteService | None = N
             await ctx.db.create_all()
         if settings.run_matching_loop:
             dispatcher.start()
+        if settings.run_gps_learning_loop and ctx.routes.has_roads:
+            gps_worker.start()
         yield
+        await gps_worker.stop()
         await dispatcher.stop()
         await ctx.db.dispose()
 
     app = FastAPI(title="UberClone API", version="0.1.0", lifespan=lifespan)
     app.state.ctx = ctx
     app.state.dispatcher = dispatcher
+    app.state.gps_worker = gps_worker
     app.add_middleware(CORSMiddleware, allow_origins=["*"] if settings.is_dev else [],
                        allow_methods=["*"], allow_headers=["*"])
 

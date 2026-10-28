@@ -9,6 +9,7 @@ Matching itself (who gets pinged, who wins) happens in dispatch.py.
 from __future__ import annotations
 
 import secrets
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -20,7 +21,7 @@ from ..context import AppContext
 from ..errors import DomainError, conflict, forbidden, not_found
 from ..models import (
     ACTIVE_RIDE_STATUSES, DRIVER_BUSY_STATUSES, DriverProfile, DriverStatus, OfferStatus, PaymentMethod,
-    PaymentStatus, Rating, Ride, RideOffer, RideStatus, Role, User,
+    PaymentStatus, PlannedRoute, Rating, Ride, RideOffer, RideStatus, Role, User,
 )
 from ..schemas import DriverInfoOut, PartyOut, PlaceIn, RideCreateIn, RideOut
 from .pricing import fare_paise
@@ -188,7 +189,25 @@ async def start_ride(session: AsyncSession, ctx: AppContext, ride_id: str, drive
     ride = await _driver_ride(session, ride_id, driver, (RideStatus.DRIVER_ARRIVED,))
     if not secrets.compare_digest(pin, ride.pin):
         raise DomainError(422, "wrong PIN")
-    ride.status, ride.started_at = RideStatus.IN_PROGRESS, _now()
+    now = _now()
+    ride.status, ride.started_at = RideStatus.IN_PROGRESS, now
+
+    # Planned routes are only needed for GPS road learning.
+    if ctx.settings.run_gps_learning_loop:
+        estimate = ctx.routes.estimate(
+            (ride.pickup_lat, ride.pickup_lng),
+            (ride.drop_lat, ride.drop_lng),
+            VehicleType(ride.vehicle_type),
+            depart_at=now,
+        )
+
+        if estimate is not None and estimate.segment_ids:
+            session.add(PlannedRoute(
+                ride_id=ride.id,
+                driver_id=driver.id,
+                phase="trip",
+                segment_ids=json.dumps(estimate.segment_ids),
+            ))
     await session.commit()
     await ctx.hub.send(ride.rider_id, "ride:started", ride_summary(ride))
     return ride

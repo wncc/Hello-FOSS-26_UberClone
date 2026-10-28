@@ -298,3 +298,9 @@ def test_routes_follow_the_roads(make_client):
     far = {"lat": 13.5, "lng": 77.6}                                    # nowhere near the mapped roads
     res = r.post("/rides/estimate", {"pickup": pickup, "drop": far})
     assert res.status_code == 422 and "outside" in res.json()["detail"]
+
+
+def test_search_timeout_seconds_setting(monkeypatch):
+    from backend.app.config import Settings
+    monkeypatch.setenv("SEARCH_TIMEOUT_SECONDS", "42")
+    assert Settings().search_timeout_seconds == 42

@@ -35,7 +35,7 @@ class Settings:
     ping_timeout_seconds: float = 20.0         # driver must answer a ping within this
     admin_phones: tuple[str, ...] = field(default_factory=lambda: tuple(
         p.strip() for p in os.environ.get("ADMIN_PHONES", "").split(",") if p.strip()))
-    search_timeout_seconds: int = 180          # no driver found -> ride becomes no_drivers
+    search_timeout_seconds: int = field(default_factory=lambda: int(os.environ.get("SEARCH_TIMEOUT_SECONDS", "180")))
     location_stale_seconds: int = 60           # drivers silent for longer are not matched
     # Road network from routing.osm_import. Defaults to data/roads.pkl when present; ROADS_PATH=none disables it.
     roads_path: str | None = field(default_factory=lambda: _roads_path())

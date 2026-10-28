@@ -87,7 +87,8 @@ def start_backend() -> subprocess.Popen:
     log = open(BUILD / "backend.log", "w", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "backend.app.main:app", "--port", str(API_PORT)], cwd=ROOT,
-        env={**os.environ, "APP_ENV": "dev", "DATABASE_URL": f"sqlite+aiosqlite:///{db.as_posix()}"},
+        env={**os.environ, "APP_ENV": "dev", "DATABASE_URL": f"sqlite+aiosqlite:///{db.as_posix()}",
+             "SEARCH_TIMEOUT_SECONDS": os.environ.get("SEARCH_TIMEOUT_SECONDS", "5")},
         stdout=log, stderr=subprocess.STDOUT)
     deadline = time.time() + 120
     while time.time() < deadline:
@@ -254,7 +255,51 @@ def login(page: Page, port: int, phone: str, name: str, step: Step) -> None:
 # The scenario
 # --------------------------------------------------------------------------- #
 
-def scenario(run_: Run, rider: Page, driver: Page) -> None:
+
+def reset_session(page: Page, port: int) -> None:
+    page.goto(f"http://localhost:{port}/")
+    try:
+        page.evaluate("() => localStorage.clear()")
+    except Exception:
+        pass
+    page.goto(f"http://localhost:{port}/")
+
+
+def set_pickup_and_drop(s: Step, rider: Page) -> None:
+    button(rider, "Confirm pickup").click()
+    see(s, rider, "DROP")
+    box = rider.locator("iframe[title=map]").last.bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    for _ in range(2):
+        rider.mouse.move(cx, cy)
+        rider.mouse.down()
+        rider.mouse.move(cx - 120, cy + 160, steps=12)
+        rider.mouse.up()
+        time.sleep(0.6)
+    s.checks.append("dragged the map to place the drop pin")
+    button(rider, "Confirm drop").click()
+    for label in ("Bike", "Auto", "Cab"):
+        see(s, rider, label)
+
+
+def book_auto(s: Step, rider: Page) -> None:
+    text(rider, "Auto").click()
+    button(rider, "Book Auto · Cash").click()
+    see(s, rider, "Finding you a driver")
+
+
+def register_driver_and_online(s: Step, driver: Page, phone: str, name: str, reg_num: str) -> None:
+    login(driver, DRIVER_PORT, phone, name, s)
+    see(s, driver, "Riders see these details")
+    text(driver, "Auto").click()
+    driver.get_by_placeholder("KA 01 AB 1234").fill(reg_num)
+    button(driver, "Save").click()
+    see(s, driver, "you’re offline")
+    button(driver, "Go online").click()
+    see(s, driver, "Finding rides near you")
+    map_ready(s, driver)
+
+def scenario_happy_path(run_: Run, rider: Page, driver: Page) -> None:
     ride = {}
     phones = [f"9{random.randint(600000000, 999999999)}" for _ in range(2)]
 
@@ -373,6 +418,128 @@ def scenario(run_: Run, rider: Page, driver: Page) -> None:
     run_.step("Ride appears in rider history and driver earnings", history)
 
 
+
+# --------------------------------------------------------------------------- #
+# Cancellation and No Drivers Scenarios (Issue 011)
+# --------------------------------------------------------------------------- #
+
+def scenario_rider_cancels_while_searching(run_: Run, rider: Page, driver: Page) -> None:
+    reset_session(rider, RIDER_PORT)
+    r_phone = f"9{random.randint(600000000, 999999999)}"
+
+    def setup(s):
+        login(rider, RIDER_PORT, r_phone, "Pooja Rider", s)
+        see(s, rider, "PICKUP")
+        map_ready(s, rider)
+        set_pickup_and_drop(s, rider)
+        expect_road_route(s, rider, label="fare preview route")
+        book_auto(s, rider)
+    if not run_.step("[Cancel searching] Rider books an auto", setup):
+        return
+
+    def cancel(s):
+        rider.on("dialog", lambda d: d.accept())
+        button(rider, "Cancel").click()
+        see(s, rider, "Ride cancelled")
+        button(rider, "Book another ride").click()
+        see(s, rider, "PICKUP")
+    run_.step("[Cancel searching] Rider cancels while searching, sees 'Ride cancelled', and can book again", cancel)
+
+
+def scenario_rider_cancels_after_driver_assigned(run_: Run, rider: Page, driver: Page) -> None:
+    reset_session(rider, RIDER_PORT)
+    reset_session(driver, DRIVER_PORT)
+    r_phone = f"9{random.randint(600000000, 999999999)}"
+    d_phone = f"9{random.randint(600000000, 999999999)}"
+
+    def setup(s):
+        login(rider, RIDER_PORT, r_phone, "Amit Rider", s)
+        see(s, rider, "PICKUP")
+        map_ready(s, rider)
+
+        register_driver_and_online(s, driver, d_phone, "Suresh Driver", "MH01CD5678")
+
+        set_pickup_and_drop(s, rider)
+        expect_road_route(s, rider, label="fare preview route")
+        book_auto(s, rider)
+
+        see(s, driver, "New ride")
+        button(driver, "Accept").click()
+        see(s, driver, "Pick up at")
+        see(s, rider, "Driver is on the way")
+    if not run_.step("[Cancel assigned] Driver is assigned to rider", setup):
+        return
+
+    def cancel(s):
+        rider.on("dialog", lambda d: d.accept())
+        driver.on("dialog", lambda d: d.accept())
+        button(rider, "Cancel").click()
+        see(s, rider, "Ride cancelled")
+        see(s, driver, "Finding rides near you")
+    run_.step("[Cancel assigned] Rider cancels; driver is notified and returns home", cancel)
+
+
+def scenario_driver_cancels_after_accepting(run_: Run, rider: Page, driver: Page) -> None:
+    reset_session(rider, RIDER_PORT)
+    reset_session(driver, DRIVER_PORT)
+    r_phone = f"9{random.randint(600000000, 999999999)}"
+    d_phone = f"9{random.randint(600000000, 999999999)}"
+
+    def setup(s):
+        login(rider, RIDER_PORT, r_phone, "Neha Rider", s)
+        see(s, rider, "PICKUP")
+        map_ready(s, rider)
+
+        register_driver_and_online(s, driver, d_phone, "Vijay Driver", "MH01EF9012")
+
+        set_pickup_and_drop(s, rider)
+        expect_road_route(s, rider, label="fare preview route")
+        book_auto(s, rider)
+
+        see(s, driver, "New ride")
+        button(driver, "Accept").click()
+        see(s, driver, "Pick up at")
+        see(s, rider, "Driver is on the way")
+    if not run_.step("[Driver cancel] Driver accepts ride and is assigned", setup):
+        return
+
+    def cancel(s):
+        driver.on("dialog", lambda d: d.accept())
+        button(driver, "Cancel ride").click()
+        see(s, driver, "Finding rides near you")
+        see(s, rider, "Finding you a driver")
+    run_.step("[Driver cancel] Driver cancels; rider sees search restart", cancel)
+
+
+def scenario_no_drivers_nearby(run_: Run, rider: Page, driver: Page) -> None:
+    reset_session(rider, RIDER_PORT)
+    reset_session(driver, DRIVER_PORT)
+    r_phone = f"9{random.randint(600000000, 999999999)}"
+
+    def setup(s):
+        login(rider, RIDER_PORT, r_phone, "Kiran Rider", s)
+        see(s, rider, "PICKUP")
+        map_ready(s, rider)
+        set_pickup_and_drop(s, rider)
+        expect_road_route(s, rider, label="fare preview route")
+        book_auto(s, rider)
+    if not run_.step("[No drivers] Rider books with no drivers online", setup):
+        return
+
+    def wait_timeout(s):
+        see(s, rider, "No drivers available right now", timeout=25_000)
+        button(rider, "Book another ride").click()
+        see(s, rider, "PICKUP")
+    run_.step("[No drivers] Search ends with 'No drivers available right now'", wait_timeout)
+
+def scenario(run_: Run, rider: Page, driver: Page) -> None:
+    scenario_happy_path(run_, rider, driver)
+    scenario_rider_cancels_while_searching(run_, rider, driver)
+    scenario_rider_cancels_after_driver_assigned(run_, rider, driver)
+    scenario_driver_cancels_after_accepting(run_, rider, driver)
+    scenario_no_drivers_nearby(run_, rider, driver)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--skip-build", action="store_true", help="reuse e2e/.build from the last run")
@@ -396,7 +563,9 @@ def main() -> int:
             phones = {}
             for who, gps in (("rider", PICKUP_GPS), ("driver", DRIVER_GPS)):
                 ctx = browser.new_context(**PHONE, geolocation=gps, permissions=["geolocation"])
-                phones[who] = ctx.new_page()
+                p_page = ctx.new_page()
+                p_page.on("dialog", lambda d: d.accept())
+                phones[who] = p_page
             run_ = Run(phones)
             scenario(run_, phones["rider"], phones["driver"])
             browser.close()

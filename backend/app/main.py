@@ -22,15 +22,25 @@ from .models import Ride
 from .services.dispatch import Dispatcher
 from .services.realtime import Hub
 from .services.routes import RouteService, load_route_service
+from .services.geocoding import ReverseGeocoder, Geocoder
 
 log = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None, routes: RouteService | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    routes: RouteService | None = None,
+    geocoder: Geocoder | None = None,
+) -> FastAPI:
     settings = settings or default_settings
     settings.validate()
-    ctx = AppContext(settings=settings, db=Database(settings.database_url), hub=Hub(),
-                     routes=routes or RouteService())
+    ctx = AppContext(
+        settings=settings,
+        db=Database(settings.database_url),
+        hub=Hub(),
+        routes=routes or RouteService(),
+        geocoder=geocoder or ReverseGeocoder(),
+    )
     dispatcher = Dispatcher(ctx)
 
     @asynccontextmanager
@@ -48,7 +58,15 @@ def create_app(settings: Settings | None = None, routes: RouteService | None = N
             dispatcher.start()
         yield
         await dispatcher.stop()
+
+        tasks = tuple(ctx.background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         await ctx.db.dispose()
+        await ctx.geocoder.close()
 
     app = FastAPI(title="UberClone API", version="0.1.0", lifespan=lifespan)
     app.state.ctx = ctx

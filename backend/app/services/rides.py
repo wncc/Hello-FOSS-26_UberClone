@@ -8,6 +8,7 @@ Matching itself (who gets pinged, who wins) happens in dispatch.py.
 """
 from __future__ import annotations
 
+import asyncio
 import secrets
 from datetime import datetime, timezone
 
@@ -33,6 +34,44 @@ CANCELLABLE_BY_DRIVER = (RideStatus.DRIVER_ASSIGNED, RideStatus.DRIVER_ARRIVED)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _resolve_address(ctx: AppContext, lat: float, lng: float) -> str | None:
+    try:
+        return await asyncio.wait_for(
+            ctx.geocoder.reverse(lat, lng),
+            timeout=1.4,
+        )
+    except Exception:
+        return None
+
+
+async def _resolve_ride_addresses(ctx: AppContext, ride_id: str) -> None:
+    """Fill in missing addresses without delaying ride booking."""
+    try:
+        async with ctx.db.sessions() as session:
+            ride = await session.get(Ride, ride_id)
+            if ride is None:
+                return
+
+            if not ride.pickup_address:
+                address = await _resolve_address(
+                    ctx, ride.pickup_lat, ride.pickup_lng
+                )
+                if address:
+                    ride.pickup_address = address
+
+            if not ride.drop_address:
+                address = await _resolve_address(
+                    ctx, ride.drop_lat, ride.drop_lng
+                )
+                if address:
+                    ride.drop_address = address
+
+            await session.commit()
+    except Exception:
+        # Address lookup must never affect ride booking or ride operation.
+        return
 
 
 # --------------------------------------------------------------------------- #
@@ -118,15 +157,32 @@ async def create_ride(session: AsyncSession, ctx: AppContext, rider: User, req: 
     if estimate.distance_m < 100:
         raise DomainError(422, "pickup and drop are too close")
     ride = Ride(
-        rider_id=rider.id, vehicle_type=req.vehicle_type.value,
-        pickup_lat=req.pickup.lat, pickup_lng=req.pickup.lng, pickup_address=req.pickup.address,
-        drop_lat=req.drop.lat, drop_lng=req.drop.lng, drop_address=req.drop.address,
-        distance_m=estimate.distance_m, duration_s=estimate.duration_s,
-        fare_estimate_paise=fare_paise(req.vehicle_type, estimate.distance_m, estimate.duration_s),
-        pin=f"{secrets.randbelow(10_000):04d}", payment_method=req.payment_method,
+        rider_id=rider.id,
+        vehicle_type=req.vehicle_type.value,
+        pickup_lat=req.pickup.lat,
+        pickup_lng=req.pickup.lng,
+        pickup_address=req.pickup.address,
+        drop_lat=req.drop.lat,
+        drop_lng=req.drop.lng,
+        drop_address=req.drop.address,
+        distance_m=estimate.distance_m,
+        duration_s=estimate.duration_s,
+        fare_estimate_paise=fare_paise(
+            req.vehicle_type,
+            estimate.distance_m,
+            estimate.duration_s,
+        ),
+        pin=f"{secrets.randbelow(10_000):04d}",
+        payment_method=req.payment_method,
     )
     session.add(ride)
     await session.commit()
+
+    if not ride.pickup_address or not ride.drop_address:
+        task = asyncio.create_task(_resolve_ride_addresses(ctx, ride.id))
+        ctx.background_tasks.add(task)
+        task.add_done_callback(ctx.background_tasks.discard)
+
     return ride
 
 

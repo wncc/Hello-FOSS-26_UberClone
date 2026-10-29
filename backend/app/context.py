@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 
 from .config import Settings
 from .db import Database
+from .services.geocoding import Geocoder
 from .services.realtime import Hub
 from .services.routes import RouteService
 
@@ -14,3 +16,5 @@ class AppContext:
     db: Database
     hub: Hub
     routes: RouteService
+    geocoder: Geocoder
+    background_tasks: set[asyncio.Task[None]] = field(default_factory=set)

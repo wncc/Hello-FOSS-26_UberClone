@@ -49,10 +49,10 @@ def make_client(tmp_path):
     """App on a fresh database, with the background matching loop off (tests tick it)."""
     clients = []
 
-    def factory(**overrides) -> TestClient:
+    def factory(*, geocoder=None, **overrides) -> TestClient:
         settings = Settings(env="test", database_url=database_url(tmp_path, len(clients)),
                             run_matching_loop=False, roads_path=None, **overrides)
-        app = create_app(settings)
+        app = create_app(settings, geocoder=geocoder)
         app.state.dispatcher.rng = random.Random(7)
         client = TestClient(app)
         client.__enter__()

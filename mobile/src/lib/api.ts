@@ -14,7 +14,7 @@ export interface TokenStore {
   refresh(): Promise<string | null>;
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'PATCH';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export class Api {
   constructor(
@@ -67,6 +67,11 @@ export class Api {
   cancel = (id: string, reason?: string) => this.request<Ride>('POST', `/rides/${id}/cancel`, { reason });
   rate = (id: string, stars: number, comment?: string) =>
     this.request<{ id: string; stars: number }>('POST', `/rides/${id}/rating`, { stars, comment });
+  // saved places
+  savedPlaces = () => this.request<Array<{ id: string; name: string; lat: number; lng: number; address: string }>>('GET', '/me/places');
+  savePlace = (name: string, lat: number, lng: number, address: string) =>
+    this.request<{ id: string; name: string; lat: number; lng: number; address: string }>('POST', '/me/places', { name, lat, lng, address });
+  deletePlace = (id: string) => this.request<void>('DELETE', `/me/places/${id}`);
 
   // driver
   driverProfile = () => this.request<DriverProfile>('GET', '/drivers/me');

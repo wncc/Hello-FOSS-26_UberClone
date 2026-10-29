@@ -298,3 +298,48 @@ def test_routes_follow_the_roads(make_client):
     far = {"lat": 13.5, "lng": 77.6}                                    # nowhere near the mapped roads
     res = r.post("/rides/estimate", {"pickup": pickup, "drop": far})
     assert res.status_code == 422 and "outside" in res.json()["detail"]
+
+def test_saved_places_crud_and_isolation(client):
+    alice = rider(client)
+    bob = rider(client)
+
+    assert alice.get("/me/places").json() == []
+
+    home = alice.post("/me/places", {
+        "name": "Home",
+        "lat": 19.0176,
+        "lng": 72.8562,
+        "address": "Dadar East",
+    })
+    assert home.status_code == 201
+    home_id = home.json()["id"]
+
+    # Bob cannot see or delete Alice's saved place
+    assert bob.get("/me/places").json() == []
+    # Use client.delete with Bob's token instead of bob.delete
+    assert client.delete(f"/me/places/{home_id}", headers={"Authorization": f"Bearer {bob.token}"}).status_code == 404
+    assert len(alice.get("/me/places").json()) == 1
+
+    # Up to 10 places allowed per rider
+    for i in range(9):
+        res = alice.post("/me/places", {
+            "name": f"Place {i}",
+            "lat": 19.0 + i * 0.001,
+            "lng": 72.85,
+            "address": f"Address {i}",
+        })
+        assert res.status_code == 201
+
+    assert len(alice.get("/me/places").json()) == 10
+    eleventh = alice.post("/me/places", {
+        "name": "Too Many",
+        "lat": 19.1,
+        "lng": 72.9,
+        "address": "Overflow",
+    })
+    assert eleventh.status_code in (400, 409, 422)
+
+    # Delete works and frees up a slot (using Alice's token)
+    assert client.delete(f"/me/places/{home_id}", headers={"Authorization": f"Bearer {alice.token}"}).status_code == 204
+    assert client.delete(f"/me/places/{home_id}", headers={"Authorization": f"Bearer {alice.token}"}).status_code == 404
+    assert len(alice.get("/me/places").json()) == 9

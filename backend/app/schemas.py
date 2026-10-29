@@ -48,6 +48,21 @@ class UserOut(BaseModel):
 
 class UserUpdateIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+    
+
+class SavedPlaceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    address: str = Field(min_length=1, max_length=200)
+
+
+class SavedPlaceOut(BaseModel):
+    id: str
+    name: str
+    lat: float
+    lng: float
+    address: str
 
 
 class DriverProfileIn(BaseModel):

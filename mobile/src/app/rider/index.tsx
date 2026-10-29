@@ -139,6 +139,12 @@ export default function RiderHome() {
                 <Text style={styles.optionTitle}>{formatFare(o.fare_paise)}</Text>
               </Pressable>
             ))}
+            {(options.find((o) => o.vehicle_type === selected)?.surge_multiplier ?? 1) > 1 && (
+              <Body>
+                Fares are higher right now (
+                {(options.find((o) => o.vehicle_type === selected)?.surge_multiplier ?? 1).toFixed(1)}×).
+              </Body>
+            )}
             <ErrorText message={error} />
             <Button title={selected ? `Book ${VEHICLE_LABEL[selected]} · Cash` : 'Choose a ride'} onPress={book}
                     loading={busy} disabled={!selected} />

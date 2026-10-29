@@ -22,6 +22,7 @@ from .models import Ride
 from .services.dispatch import Dispatcher
 from .services.realtime import Hub
 from .services.routes import RouteService, load_route_service
+from .services.surge import SurgePricing
 
 log = logging.getLogger(__name__)
 
@@ -29,8 +30,13 @@ log = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None, routes: RouteService | None = None) -> FastAPI:
     settings = settings or default_settings
     settings.validate()
-    ctx = AppContext(settings=settings, db=Database(settings.database_url), hub=Hub(),
-                     routes=routes or RouteService())
+    ctx = AppContext(
+        settings=settings,
+        db=Database(settings.database_url),
+        hub=Hub(),
+        routes=routes or RouteService(),
+        surge=SurgePricing(settings),
+    )
     dispatcher = Dispatcher(ctx)
 
     @asynccontextmanager

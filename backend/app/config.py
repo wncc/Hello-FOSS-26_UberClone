@@ -40,6 +40,24 @@ class Settings:
     # Road network from routing.osm_import. Defaults to data/roads.pkl when present; ROADS_PATH=none disables it.
     roads_path: str | None = field(default_factory=lambda: _roads_path())
     city_timezone: str = "IST"
+    surge_enabled: bool = field(
+        default_factory=lambda: _bool("SURGE_ENABLED", False)
+    )
+    surge_max_multiplier: float = field(
+        default_factory=lambda: float(os.environ.get("SURGE_MAX_MULTIPLIER", "2.0"))
+    )
+    surge_zone_degrees: float = field(
+        default_factory=lambda: float(os.environ.get("SURGE_ZONE_DEGREES", "0.01"))
+    )
+    surge_sensitivity: float = field(
+        default_factory=lambda: float(os.environ.get("SURGE_SENSITIVITY", "0.5"))
+    )
+    surge_smoothing_alpha: float = field(
+        default_factory=lambda: float(os.environ.get("SURGE_SMOOTHING_ALPHA", "0.5"))
+    )
+    surge_refresh_seconds: int = field(
+        default_factory=lambda: int(os.environ.get("SURGE_REFRESH_SECONDS", "60"))
+    )
 
     @property
     def is_dev(self) -> bool:
@@ -48,6 +66,16 @@ class Settings:
     def validate(self) -> None:
         if not self.is_dev and self.jwt_secret == DEV_SECRET:
             raise RuntimeError("JWT_SECRET must be set outside dev/test")
+        if not 1.0 <= self.surge_max_multiplier <= 2.0:
+            raise ValueError("SURGE_MAX_MULTIPLIER must be between 1.0 and 2.0")
+        if self.surge_zone_degrees <= 0:
+            raise ValueError("SURGE_ZONE_DEGREES must be positive")
+        if not 0 < self.surge_smoothing_alpha <= 1:
+            raise ValueError("SURGE_SMOOTHING_ALPHA must be in (0, 1]")
+        if self.surge_refresh_seconds < 1:
+            raise ValueError("SURGE_REFRESH_SECONDS must be at least 1")
+        if self.surge_sensitivity < 0:
+            raise ValueError("SURGE_SENSITIVITY cannot be negative")
 
 
 settings = Settings()

@@ -94,6 +94,7 @@ class EstimateOption(BaseModel):
     duration_s: int
     drivers_nearby: int
     route: list[tuple[float, float]] = []      # [lat, lng] along the roads, pickup -> drop
+    surge_multiplier: float = 1.0
 
 
 class RouteOut(BaseModel):
@@ -149,6 +150,7 @@ class RideOut(BaseModel):
     cancelled_at: datetime | None
     cancelled_by: str | None
     cancel_reason: str | None
+    surge_multiplier: float = 1.0
 
 
 class StartIn(BaseModel):

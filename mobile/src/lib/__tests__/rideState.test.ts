@@ -3,9 +3,16 @@ import { applyRiderEvent, driverHome, secondsLeft, type DriverHome } from '../ri
 import type { Offer, Ride, ServerEvent } from '../types';
 
 const summary = {
-  ride_id: 'R1', status: 'searching' as const, vehicle_type: 'car' as const,
-  pickup: { lat: 12.97, lng: 77.59 }, drop: { lat: 12.93, lng: 77.62 },
-  distance_m: 5000, duration_s: 900, fare_paise: 20000, payment_method: 'cash' as const,
+  ride_id: 'R1',
+  status: 'searching' as const,
+  vehicle_type: 'car' as const,
+  pickup: { lat: 1, lng: 2 },
+  drop: { lat: 3, lng: 4 },
+  distance_m: 1000,
+  duration_s: 300,
+  fare_paise: 15000,
+  payment_method: 'cash' as const,
+  surge_multiplier: 1.0,
 };
 
 const ride: Ride = {
@@ -13,6 +20,7 @@ const ride: Ride = {
   distance_m: 5000, duration_s: 900, fare_estimate_paise: 20000, fare_final_paise: null, payment_method: 'cash',
   payment_status: 'pending', pin: '1234', rider: null, driver: null, requested_at: '', assigned_at: null,
   arrived_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: null, cancel_reason: null,
+  surge_multiplier: 1.0
 };
 
 describe('rider events', () => {

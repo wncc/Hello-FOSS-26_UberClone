@@ -12,7 +12,15 @@ from routing import VehicleType
 from ..context import AppContext
 from ..deps import current_user, get_ctx, get_session, require
 from ..errors import DomainError
-from ..models import DriverProfile, DriverStatus, Ride, RideStatus, Role, User
+from ..models import (
+    DRIVER_BUSY_STATUSES,
+    DriverProfile,
+    DriverStatus,
+    Ride,
+    RideStatus,
+    Role,
+    User,
+)
 from ..schemas import (
     CancelIn, EstimateIn, EstimateOption, EstimateOut, RatingIn, RideCreateIn, RideOut, RouteOut, StartIn,
 )
@@ -35,22 +43,52 @@ async def estimate(body: EstimateIn, ctx: AppContext = Depends(get_ctx), _: User
         route = ctx.routes.estimate(origin, dest, vehicle)
         if route is None:
             continue
-        options.append(EstimateOption(vehicle_type=vehicle, fare_paise=fare_paise(vehicle, route.distance_m, route.duration_s),
-                                      distance_m=route.distance_m, duration_s=route.duration_s,
-                                      drivers_nearby=nearby.get(vehicle.value, 0), route=route.geometry))
+        surge = await ctx.surge.multiplier(
+            session, origin[0], origin[1], vehicle.value
+        )
+        base_fare = fare_paise(vehicle, route.distance_m, route.duration_s)
+        options.append(
+            EstimateOption(
+                vehicle_type=vehicle,
+                fare_paise=round(base_fare * surge),
+                surge_multiplier=surge,
+                distance_m=route.distance_m,
+                duration_s=route.duration_s,
+                drivers_nearby=nearby.get(vehicle.value, 0),
+                route=route.geometry,
+            )
+        )
     if not options:
         raise DomainError(422, NO_ROUTE_MESSAGE)
     return EstimateOut(options=options)
 
 
 async def _drivers_nearby(session: AsyncSession, ctx: AppContext, origin) -> dict[str, int]:
-    fresh_after = datetime.now(timezone.utc) - timedelta(seconds=ctx.settings.location_stale_seconds)
+    fresh_after = datetime.now(timezone.utc) - timedelta(
+        seconds=ctx.settings.location_stale_seconds
+    )
+
+    busy_driver_ids = select(Ride.driver_id).where(
+        Ride.status.in_(DRIVER_BUSY_STATUSES),
+        Ride.driver_id.is_not(None),
+    )
+
+    profiles = await session.scalars(
+        select(DriverProfile).where(
+            DriverProfile.is_online.is_(True),
+            DriverProfile.status == DriverStatus.APPROVED,
+            DriverProfile.location_at >= fresh_after,
+            ~DriverProfile.user_id.in_(busy_driver_ids),
+        )
+    )
+
     counts: dict[str, int] = {}
-    for p in await session.scalars(select(DriverProfile).where(
-            DriverProfile.is_online.is_(True), DriverProfile.status == DriverStatus.APPROVED,
-            DriverProfile.location_at >= fresh_after)):
-        if haversine_km(origin, (p.lat, p.lng)) <= NEARBY_KM:
-            counts[p.vehicle_type] = counts.get(p.vehicle_type, 0) + 1
+    for profile in profiles:
+        if haversine_km(origin, (profile.lat, profile.lng)) <= NEARBY_KM:
+            counts[profile.vehicle_type] = (
+                counts.get(profile.vehicle_type, 0) + 1
+            )
+
     return counts
 
 

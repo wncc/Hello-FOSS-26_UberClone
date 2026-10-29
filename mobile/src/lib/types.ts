@@ -44,6 +44,7 @@ export interface EstimateOption {
   duration_s: number;
   drivers_nearby: number;
   route: Path;
+  surge_multiplier: number
 }
 
 export interface RideRoute {
@@ -88,6 +89,7 @@ export interface Ride {
   cancelled_at: string | null;
   cancelled_by: Role | null;
   cancel_reason: string | null;
+  surge_multiplier: number
 }
 
 export interface DriverProfile {
@@ -110,6 +112,7 @@ export interface RideSummary {
   duration_s: number;
   fare_paise: number;
   payment_method: 'cash' | 'online';
+  surge_multiplier: number
 }
 
 export interface Offer extends RideSummary {

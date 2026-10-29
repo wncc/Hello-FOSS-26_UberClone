@@ -59,6 +59,7 @@ async def ride_out(session: AsyncSession, ride: Ride, viewer: User) -> RideOut:
         drop=PlaceIn(lat=ride.drop_lat, lng=ride.drop_lng, address=ride.drop_address),
         distance_m=ride.distance_m, duration_s=ride.duration_s,
         fare_estimate_paise=ride.fare_estimate_paise, fare_final_paise=ride.fare_final_paise,
+        surge_multiplier=ride.surge_multiplier,
         payment_method=ride.payment_method, payment_status=ride.payment_status,
         pin=ride.pin if viewer.id == ride.rider_id else None,
         rider=_party(rider), driver=driver_info,
@@ -75,6 +76,7 @@ def ride_summary(ride: Ride) -> dict:
         "drop": {"lat": ride.drop_lat, "lng": ride.drop_lng, "address": ride.drop_address},
         "distance_m": ride.distance_m, "duration_s": ride.duration_s, "fare_paise": ride.fare_estimate_paise,
         "payment_method": ride.payment_method.value,
+        "surge_multiplier": ride.surge_multiplier,
     }
 
 
@@ -117,12 +119,20 @@ async def create_ride(session: AsyncSession, ctx: AppContext, rider: User, req: 
         raise DomainError(422, NO_ROUTE_MESSAGE)
     if estimate.distance_m < 100:
         raise DomainError(422, "pickup and drop are too close")
+    surge = await ctx.surge.multiplier(
+        session, req.pickup.lat, req.pickup.lng, req.vehicle_type.value
+    )
+    base_fare = fare_paise(
+        req.vehicle_type, estimate.distance_m, estimate.duration_s
+    )
+    final_estimate = round(base_fare * surge)
     ride = Ride(
         rider_id=rider.id, vehicle_type=req.vehicle_type.value,
         pickup_lat=req.pickup.lat, pickup_lng=req.pickup.lng, pickup_address=req.pickup.address,
         drop_lat=req.drop.lat, drop_lng=req.drop.lng, drop_address=req.drop.address,
         distance_m=estimate.distance_m, duration_s=estimate.duration_s,
-        fare_estimate_paise=fare_paise(req.vehicle_type, estimate.distance_m, estimate.duration_s),
+        fare_estimate_paise=final_estimate,
+        surge_multiplier=surge,
         pin=f"{secrets.randbelow(10_000):04d}", payment_method=req.payment_method,
     )
     session.add(ride)

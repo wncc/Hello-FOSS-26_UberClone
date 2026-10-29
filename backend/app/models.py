@@ -146,6 +146,9 @@ class Ride(Base):
     distance_m: Mapped[int] = mapped_column(Integer)
     duration_s: Mapped[int] = mapped_column(Integer)
     fare_estimate_paise: Mapped[int] = mapped_column(Integer)
+    surge_multiplier: Mapped[float] = mapped_column(
+        Float, default=1.0, server_default="1.0"
+    )
     fare_final_paise: Mapped[int | None] = mapped_column(Integer)
     pin: Mapped[str] = mapped_column(String(4))
 

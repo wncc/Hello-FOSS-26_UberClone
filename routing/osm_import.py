@@ -25,7 +25,7 @@ from typing import Iterable
 
 from .graph import haversine_m
 from .models import (
-    EdgeMeta, RestrictedZone, RoadAccess, SpeedLimitSource, Toll, ZoneKind, expected_speed_kmh,
+    EdgeMeta, RestrictedZone, RoadAccess, SpeedLimitSource, Toll, ZoneKind, free_flow_speed_kmh,
 )
 from .road_classes import RoadClass
 from .time_buckets import HOURS, SATURDAY, SUNDAY, WEEKDAY
@@ -429,7 +429,7 @@ def build_edges(way_id: int, tags: dict[str, str], nodes: list[tuple[int, float,
             edges.append(EdgeMeta(
                 segment_id=f"{way_id}:{a}:{b}", from_node=str(a), to_node=str(b), road_class=road_class,
                 distance_m=sum(haversine_m(p, q) for p, q in zip(points, points[1:])),
-                speed_kmh=expected_speed_kmh(max_speed, profile.uniform_speed_kmh, calming), osm_way_id=way_id,
+                speed_kmh=free_flow_speed_kmh(road_class, max_speed, profile, calming), osm_way_id=way_id,
                 geometry=points, max_speed_kmh=max_speed, max_speed_source=source,
                 road_access=access, toll=toll, no_access_buckets=no_access,
                 end_delay_s=sum(profile.point_delay_s.get(f, 0.0) for f in features),

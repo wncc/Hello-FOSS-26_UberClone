@@ -41,6 +41,16 @@ BASE_PRIORITY: dict[RoadClass, float] = {
 # (Per-class / map speeds and an ETA prior are tracked in docs/issues/001.)
 UNIFORM_SPEED_KMH = 30.0
 
+# Free-flow MOVING speed per road class in km/h (signal waits and turn costs are added
+# separately, so these exceed all-in city averages). PLACEHOLDERS anchored on TomTom Traffic
+# Index, Mumbai, 2025: ~34 km/h all-in free-flow, 54.1 km/h observed highway average.
+FREE_FLOW_KMH: dict[RoadClass, float] = {
+    RoadClass.MOTORWAY: 70.0, RoadClass.TRUNK: 60.0, RoadClass.PRIMARY: 40.0,
+    RoadClass.SECONDARY: 36.0, RoadClass.TERTIARY: 32.0, RoadClass.UNCLASSIFIED: 28.0,
+    RoadClass.RESIDENTIAL: 24.0, RoadClass.LIVING_STREET: 15.0, RoadClass.SERVICE: 15.0,
+    RoadClass.TRACK: 10.0, RoadClass.OTHER: 24.0,
+}
+
 MAIN_ROAD_CLASSES = frozenset({
     RoadClass.MOTORWAY, RoadClass.TRUNK, RoadClass.PRIMARY,
     RoadClass.SECONDARY, RoadClass.TERTIARY,

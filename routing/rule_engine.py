@@ -38,10 +38,8 @@ class RuleValidationError(ValueError):
 
 def baseline_model(profile: VehicleProfile = CAR, distance_influence: float = 0.0) -> CustomModel:
     speed = [
-        Statement(Target.SPEED, Always(), Op.LIMIT_TO, profile.uniform_speed_kmh, Source.BASELINE, "base.speed"),
+        Statement(Target.SPEED, Always(), Op.LIMIT_TO, EDGE_AVERAGE_SPEED, Source.BASELINE, "base.speed"),
         Statement(Target.SPEED, Always(), Op.LIMIT_TO, MAX_SPEED, Source.BASELINE, "base.speed_limit"),
-        Statement(Target.SPEED, HasTrafficCalming(), Op.MULTIPLY_BY, SPEED_BREAKER_FACTOR, Source.BASELINE,
-                  "base.speed_breaker"),
     ]
     priority = [
         Statement(Target.PRIORITY, RoadClassIs(rc), Op.MULTIPLY_BY, p,

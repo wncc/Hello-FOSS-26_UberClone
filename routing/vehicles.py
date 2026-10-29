@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
-from .road_classes import BASE_PRIORITY, UNIFORM_SPEED_KMH, RoadClass
+from .road_classes import BASE_PRIORITY, UNIFORM_SPEED_KMH, RoadClass, FREE_FLOW_KMH
 
 
 class VehicleType(str, Enum):
@@ -93,6 +93,7 @@ class VehicleProfile:
     priority: dict[RoadClass, float]
     turns: TurnCosts
     point_delay_s: dict[str, float]
+    free_flow_kmh: dict[RoadClass, float]
     uniform_speed_kmh: float = UNIFORM_SPEED_KMH
 
 
@@ -102,9 +103,25 @@ class VehicleProfile:
 # but are open most of the time.
 _SIGNAL_S, _LEVEL_CROSSING_S = 30.0, 60.0
 
+
+CAR_FREE_FLOW = dict(FREE_FLOW_KMH)
+# ASSUMPTION: autos are slow on fast roads; the motorway entry is only a fallback (autos are barred).
+AUTO_FREE_FLOW = {
+    RoadClass.MOTORWAY: 35.0, RoadClass.TRUNK: 38.0, RoadClass.PRIMARY: 30.0, RoadClass.SECONDARY: 28.0,
+    RoadClass.TERTIARY: 26.0, RoadClass.UNCLASSIFIED: 23.0, RoadClass.RESIDENTIAL: 20.0,
+    RoadClass.LIVING_STREET: 12.0, RoadClass.SERVICE: 12.0, RoadClass.TRACK: 8.0, RoadClass.OTHER: 18.0,
+}
+# ASSUMPTION: bikes lose little on minor roads (they filter through traffic) but are slower on fast roads.
+BIKE_FREE_FLOW = {
+    RoadClass.MOTORWAY: 60.0, RoadClass.TRUNK: 52.0, RoadClass.PRIMARY: 38.0, RoadClass.SECONDARY: 35.0,
+    RoadClass.TERTIARY: 32.0, RoadClass.UNCLASSIFIED: 28.0, RoadClass.RESIDENTIAL: 25.0,
+    RoadClass.LIVING_STREET: 15.0, RoadClass.SERVICE: 15.0, RoadClass.TRACK: 12.0, RoadClass.OTHER: 24.0,
+}
+
 CAR = VehicleProfile(
     vehicle=VehicleType.CAR, osm_keys=("motorcar",), legal=INDIA_M1, cap_signs_at_category=False,
     pays_toll=True, toll_key="motorcar", priority=dict(BASE_PRIORITY),
+    free_flow_kmh=CAR_FREE_FLOW,
     turns=TurnCosts(straight=0.0, near_side=3.0, far_side=10.0, u_turn=25.0),
     point_delay_s={"traffic_signals": _SIGNAL_S, "toll_booth": 20.0, "level_crossing": _LEVEL_CROSSING_S},
 )
@@ -116,6 +133,7 @@ BIKE = VehicleProfile(
     priority={**BASE_PRIORITY, RoadClass.SECONDARY: 0.95, RoadClass.TERTIARY: 0.9,
               RoadClass.UNCLASSIFIED: 0.8, RoadClass.RESIDENTIAL: 0.7, RoadClass.LIVING_STREET: 0.4,
               RoadClass.SERVICE: 0.5, RoadClass.TRACK: 0.2},
+    free_flow_kmh=BIKE_FREE_FLOW,
     turns=TurnCosts(straight=0.0, near_side=2.0, far_side=6.0, u_turn=12.0),
     point_delay_s={"traffic_signals": _SIGNAL_S, "toll_booth": 5.0, "level_crossing": _LEVEL_CROSSING_S},
 )
@@ -128,6 +146,7 @@ AUTO = VehicleProfile(
     pays_toll=False, toll_key=None,  # ASSUMPTION: verify per plaza; state-run tolls may charge three-wheelers
     priority={**BASE_PRIORITY, RoadClass.UNCLASSIFIED: 0.7, RoadClass.RESIDENTIAL: 0.6,
               RoadClass.LIVING_STREET: 0.3, RoadClass.SERVICE: 0.3},
+    free_flow_kmh=AUTO_FREE_FLOW,
     turns=TurnCosts(straight=0.0, near_side=2.0, far_side=8.0, u_turn=18.0),
     point_delay_s={"traffic_signals": _SIGNAL_S, "toll_booth": 10.0, "level_crossing": _LEVEL_CROSSING_S},
 )

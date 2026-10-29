@@ -16,7 +16,7 @@ from .models import (
 )
 from .restrictions import RouteOptions, conditional_statements, has_toll, request_statements, zone_statements
 from .rule_engine import CompiledModel, baseline_model, merge_models, zone_members
-from .speed_model import DEFAULT_SPEED_POLICY, FittedSpeedModel, SpeedModelPolicy, fit_speed_model
+from .speed_model import DEFAULT_CONGESTION_PRIOR, DEFAULT_SPEED_POLICY, CongestionPrior, EtaCalibrator, FittedSpeedModel,SpeedModelPolicy, fit_speed_model, default_group
 from .telemetry import DEFAULT_POLICY, TelemetryPolicy, aggregate, derive_rules
 from .time_buckets import TimeBuckets
 from .turns import NO_RESTRICTIONS, TurnModel, TurnRestrictions
@@ -246,7 +246,8 @@ class RoutingService:
                  zones: list[RestrictedZone] = (),
                  profile: VehicleProfile = CAR,
                  turn_restrictions: TurnRestrictions = NO_RESTRICTIONS,
-                 area_members: dict[str, frozenset[str]] | None = None):
+                 area_members: dict[str, frozenset[str]] | None = None,
+                 congestion_prior: CongestionPrior | None = DEFAULT_CONGESTION_PRIOR):
         self.backend = backend
         self.edges = edges
         self.profile = profile
@@ -261,10 +262,17 @@ class RoutingService:
         self.policy = policy
         self.buckets = buckets
         self.speed_policy = speed_policy
+        self.congestion_prior = congestion_prior
         self.telemetry_rules: list[Statement] = []
         self.ops_rules: list[Statement] = []
         self.health: dict[str, RoadHealth] = {}
-        self.speed_model: FittedSpeedModel | None = None
+        self.speed_model: FittedSpeedModel | None = (
+            FittedSpeedModel(buckets, default_group, speed_policy, edges, prior=congestion_prior)
+            if buckets is not None else None
+        )
+        self.eta_calibrator: EtaCalibrator | None = (
+         EtaCalibrator(buckets) if buckets is not None else None
+        )
 
     def refresh_telemetry(self, speed_samples: list[SpeedSample], exposures: list[SegmentExposure],
                           now: datetime | None = None) -> list[Statement]:
@@ -278,7 +286,7 @@ class RoutingService:
         exposures = [e for e in exposures if e.vehicle is self.profile.vehicle]
         if self.buckets:
             self.speed_model = fit_speed_model(self.edges, speed_samples, now, self.buckets,
-                                               policy=self.speed_policy)
+                                               policy=self.speed_policy, prior=self.congestion_prior)
         previously_active = {r.rule_id for r in self.telemetry_rules
                              if r.expires_at is None or now < r.expires_at}
         stats = aggregate(speed_samples, exposures, now, self.policy, self.speed_model)
@@ -315,10 +323,20 @@ class RoutingService:
         path = [self.edges[s] for s in result.segments if s in self.edges]
         tolls = [e.segment_id for e in path if has_toll(e)]
         if not self.speed_model or not path:
-            return replace(result, toll_segments=tolls)
+            return replace(result, uncalibrated_eta_s=result.eta_s, toll_segments=tolls)
         driving, delays, turning = route_time_breakdown(path, depart_at, self.speed_model.speed_kmh, self.turns)
-        return replace(result, eta_s=driving + delays + turning, point_delay_s=delays, turn_s=turning,
-                       toll_segments=tolls)
+        raw_eta_s = driving + delays + turning
+        eta_s = self.eta_calibrator.calibrate(raw_eta_s, depart_at) if self.eta_calibrator else raw_eta_s
+        return replace(result, eta_s=eta_s, uncalibrated_eta_s=raw_eta_s, point_delay_s=delays,
+                       turn_s=turning, toll_segments=tolls)
+
+    def record_trip_eta(self, predicted_s: float, actual_s: float, departed_at: datetime) -> None:
+        """Record a finished trip for per-bucket ETA calibration.
+
+        predicted_s must be RouteResult.uncalibrated_eta_s, not eta_s: learning from already-corrected
+        ETAs would pull the correction back toward 1."""
+        if self.eta_calibrator is not None:
+            self.eta_calibrator.record(predicted_s, actual_s, departed_at)
 
 
 class MultiVehicleRouter:
@@ -357,4 +375,5 @@ def _check_expected_speeds(base: CustomModel, edges: dict[str, EdgeMeta]) -> Non
                   if not math.isclose(compiled.evaluate(e).speed_kmh, e.speed_kmh, rel_tol=1e-9)]
     if mismatched:
         raise ValueError(f"{len(mismatched)} edges (e.g. {mismatched[0]}) have a speed_kmh that differs from "
-                         f"the baseline's; build it with models.expected_speed_kmh()")
+                         f"the baseline's; build it with models.free_flow_speed_kmh()")
+

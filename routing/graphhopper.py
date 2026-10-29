@@ -27,7 +27,7 @@ from .models import (
     RoadClassIs, RouteResult, SegmentIs, Source, Statement, TollIs,
 )
 from .turns import LEFT_HAND_TRAFFIC, STRAIGHT_MAX_DEG, U_TURN_MIN_DEG
-from .vehicles import VehicleProfile
+from .vehicles import VehicleProfile, SPEED_BREAKER_FACTOR
 
 # ASSUMPTION, verify on the deployed version: GraphHopper's change_angle is positive for right turns.
 GH_RIGHT_TURN_IS_POSITIVE = True
@@ -133,6 +133,10 @@ def to_graphhopper(model: CustomModel, edges: dict[str, EdgeMeta], include_basel
             zone = model.areas[stmt.condition.zone_id]
             features[zone_area_id(zone.zone_id)] = _feature(zone_area_id(zone.zone_id), _ring_lonlat(zone))
         out[stmt.target.value].append(statement_json(stmt, segment_mode))
+    if extensions and include_baseline:
+        # The Python engine bakes the breaker slowdown into EdgeMeta.speed_kmh, so the baseline model
+        # no longer carries it; GraphHopper has no per-edge speed from us, so it needs the rule.
+        out["speed"].append({"if": "traffic_calming", "multiply_by": SPEED_BREAKER_FACTOR})
     if features:
         out["areas"] = {"type": "FeatureCollection", "features": list(features.values())}
     if include_baseline and profile is not None:

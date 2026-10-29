@@ -16,7 +16,7 @@ from .monitoring import detect_exposures, route_quality
 from .restrictions import RouteOptions
 from .road_classes import BASE_PRIORITY, UNIFORM_SPEED_KMH, RoadClass, priority_for
 from .rule_engine import CompiledModel, baseline_model, merge_models
-from .speed_model import FittedSpeedModel, SegmentKind, SpeedModelPolicy, fit_speed_model
+from .speed_model import DEFAULT_CONGESTION_PRIOR, CongestionPrior, EtaCalibrator, FittedSpeedModel, SegmentKind,SpeedModelPolicy, fit_speed_model
 from .telemetry import TelemetryPolicy, aggregate, derive_rules, road_health
 from .time_buckets import IST, TimeBuckets
 from .turns import Turn, TurnModel, TurnRestrictions, classify_turn
@@ -34,5 +34,5 @@ __all__ = [
     "InArea", "RestrictedZone", "RoadAccess", "RoadAccessIs", "RouteOptions", "SpeedLimitSource",
     "Toll", "TollIs", "ZoneKind", "expected_speed_kmh",
     "MultiVehicleRouter", "graph_from_edges", "Turn", "TurnModel", "TurnRestrictions", "classify_turn",
-    "AUTO", "BIKE", "CAR", "PROFILES", "VehicleProfile", "VehicleType",
+    "AUTO", "BIKE", "CAR", "PROFILES", "VehicleProfile", "VehicleType", "CongestionPrior", "DEFAULT_CONGESTION_PRIOR","EtaCalibrator",
 ]

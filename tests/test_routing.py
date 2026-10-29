@@ -224,7 +224,7 @@ class IntegrationFormatTests(unittest.TestCase):
             Statement(Target.PRIORITY, SegmentIs("8442"), Op.MULTIPLY_BY, 0.01, Source.TELEMETRY_DEVIATION, "p"),
         ]
         gh = to_graphhopper(merge_models(baseline_model(), [overlays], NOW), {}, segment_mode="expression")
-        self.assertEqual(gh["speed"], [{"if": "true", "limit_to": 30.0},
+        self.assertEqual(gh["speed"], [{"if": "true", "limit_to": "car_average_speed"},
                                        {"if": "true", "limit_to": "max_speed"},
                                        {"if": "segment_id == 15933", "limit_to": 15.0}])
         self.assertIn({"if": "road_class == RESIDENTIAL", "multiply_by": 0.5}, gh["priority"])

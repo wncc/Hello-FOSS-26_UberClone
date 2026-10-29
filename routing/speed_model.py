@@ -26,13 +26,151 @@ from enum import Enum
 from typing import Callable, Hashable, Iterable
 
 from .models import EdgeMeta, Op, RoadClassIs, Source, SpeedSample, Statement, Target
-from .road_classes import RoadClass
-from .time_buckets import BUCKET_COUNT, TimeBuckets
+from .road_classes import MAIN_ROAD_CLASSES, RoadClass
+from .time_buckets import BUCKET_COUNT, SATURDAY, SUNDAY, WEEKDAY, TimeBuckets, daytype_of, hour_of
 
 
 def default_group(edge: EdgeMeta) -> str:
     """Traffic is learned per group. Start with road class; add a zone (e.g. H3 res 7) later."""
     return edge.road_class.value
+
+# Starting weekday slowdown multipliers by (start_hour, end_hour_inclusive, main_road, minor_road).
+# Proposed starting values for a large Indian city (issue 001, step 2).
+_WEEKDAY_SLOWDOWN_BANDS: tuple[tuple[int, int, float, float], ...] = (
+    (0, 5, 1.0, 1.0),
+    (6, 7, 1.15, 1.1),
+    (8, 10, 1.8, 1.4),
+    (11, 16, 1.4, 1.2),
+    (17, 20, 2.0, 1.5),
+    (21, 23, 1.2, 1.1),
+)
+
+_DAYTYPE_EXCESS_SCALE: dict[int, float] = {
+    WEEKDAY: 1.0,
+    SATURDAY: 0.8,
+    SUNDAY: 0.5,
+}
+
+_MAIN_GROUP_NAMES: frozenset[str] = frozenset(rc.value for rc in MAIN_ROAD_CLASSES)
+_ALL_GROUP_NAMES: frozenset[str] = frozenset(rc.value for rc in RoadClass)
+
+
+def _weekday_band_slowdown(hour: int, is_main: bool) -> float:
+    for lo, hi, main_val, minor_val in _WEEKDAY_SLOWDOWN_BANDS:
+        if lo <= hour <= hi:
+            return main_val if is_main else minor_val
+    return 1.0
+
+
+@dataclass(frozen=True)
+class CongestionPrior:
+    """Starting congestion table (road class x weekday/Saturday/Sunday x hour) as a slowdown
+    multiplier >= 1.0. Gives the speed model a sensible traffic term ln(slowdown) before
+    telemetry arrives, and acts as the shrinkage target as data trickles in."""
+    table: dict[tuple[str, int], float] = field(default_factory=dict)
+
+    @classmethod
+    def default(cls) -> "CongestionPrior":
+        table: dict[tuple[str, int], float] = {}
+        for rc in RoadClass:
+            is_main = rc in MAIN_ROAD_CLASSES
+            for b in range(BUCKET_COUNT):
+                base = _weekday_band_slowdown(hour_of(b), is_main)
+                scale = _DAYTYPE_EXCESS_SCALE.get(daytype_of(b), 1.0)
+                table[(rc.value, b)] = 1.0 + scale * (base - 1.0)
+        return cls(table)
+
+    def slowdown(self, group: str | RoadClass, bucket: int) -> float:
+        key = group.value if isinstance(group, RoadClass) else group
+        if (key, bucket) in self.table:
+            return self.table[(key, bucket)]
+        rc_key = key.split(":", 1)[0] if ":" in key else key
+        if (rc_key, bucket) in self.table:
+            return self.table[(rc_key, bucket)]
+        if rc_key in _ALL_GROUP_NAMES:
+            base = _weekday_band_slowdown(hour_of(bucket), rc_key in _MAIN_GROUP_NAMES)
+            scale = _DAYTYPE_EXCESS_SCALE.get(daytype_of(bucket), 1.0)
+            return 1.0 + scale * (base - 1.0)
+        return 1.0
+
+    def log_slowdown(self, group: str | RoadClass, bucket: int) -> float:
+        return math.log(max(1.0, self.slowdown(group, bucket)))
+
+
+DEFAULT_CONGESTION_PRIOR = CongestionPrior.default()
+
+
+# --------------------------------------------------------------------------- #
+# Per-bucket ETA calibration (issue 001, step 3)
+# --------------------------------------------------------------------------- #
+
+_ETA_CLIP_LOG = math.log(3.0)
+
+
+@dataclass
+class EtaCalibrator:
+    """Two-stage hierarchical shrinkage calibrator over (predicted_s, actual_s) pairs.
+
+    Each observation's log ratio ln(actual / predicted) is clipped to [-ln 3, +ln 3].
+    1. Global log error is shrunk toward 0 with pseudo-count k:
+       g = sum(r) / (N + k)
+    2. Each bucket's mean is shrunk toward the global error g with pseudo-count k:
+       b_log = (sum_b(r) + k * g) / (n_b + k)
+    """
+    buckets: TimeBuckets
+    k: float = 20.0
+    clip_log: float = _ETA_CLIP_LOG
+    _global_sum: float = 0.0
+    _global_count: int = 0
+    _bucket_sums: dict[int, float] = field(default_factory=dict)
+    _bucket_counts: dict[int, int] = field(default_factory=dict)
+    _raw_apes: dict[int, list[float]] = field(default_factory=dict)
+    _calibrated_apes: dict[int, list[float]] = field(default_factory=dict)
+
+    def record(self, predicted_s: float, actual_s: float, departed_at: datetime) -> None:
+        """Record a completed trip's uncalibrated predicted_s vs. actual_s duration in seconds."""
+        if predicted_s <= 0.0 or actual_s <= 0.0:
+            return
+        b = self.buckets.of(departed_at)
+        cal_pred = predicted_s * self.multiplier(b)
+        self._raw_apes.setdefault(b, []).append(abs(actual_s - predicted_s) / actual_s)
+        self._calibrated_apes.setdefault(b, []).append(abs(actual_s - cal_pred) / actual_s)
+
+        raw_log = math.log(actual_s / predicted_s)
+        r = max(-self.clip_log, min(self.clip_log, raw_log))
+        self._global_sum += r
+        self._global_count += 1
+        self._bucket_sums[b] = self._bucket_sums.get(b, 0.0) + r
+        self._bucket_counts[b] = self._bucket_counts.get(b, 0) + 1
+
+    def global_log_error(self) -> float:
+        if self._global_count == 0:
+            return 0.0
+        return self._global_sum / (self._global_count + self.k)
+
+    def log_multiplier(self, at: datetime | int) -> float:
+        b = at if isinstance(at, int) else self.buckets.of(at)
+        g = self.global_log_error()
+        n_b = self._bucket_counts.get(b, 0)
+        s_b = self._bucket_sums.get(b, 0.0)
+        return (s_b + self.k * g) / (n_b + self.k)
+
+    def multiplier(self, at: datetime | int) -> float:
+        return math.exp(self.log_multiplier(at))
+
+    def calibrate(self, eta_s: float, at: datetime | int) -> float:
+        return eta_s * self.multiplier(at)
+
+    def median_ape(self, bucket: int | None = None, calibrated: bool = True) -> float | None:
+        """Median |actual - predicted| / actual. One bucket, or all trips when bucket is None.
+        None means no trips yet (not a perfect score)."""
+        src = self._calibrated_apes if calibrated else self._raw_apes
+        errs = sorted(e for es in src.values() for e in es) if bucket is None else sorted(src.get(bucket, []))
+        if not errs:
+            return None
+        n, mid = len(errs), len(errs) // 2
+        return errs[mid] if n % 2 == 1 else 0.5 * (errs[mid - 1] + errs[mid])
+
 
 
 @dataclass(frozen=True)
@@ -107,11 +245,16 @@ class FittedSpeedModel:
     local: dict[tuple[str, int], float] = field(default_factory=dict)
     weight: dict[str, float] = field(default_factory=dict)
     drivers: dict[str, int] = field(default_factory=dict)
+    prior: CongestionPrior | None = None
 
     # -- lookups ------------------------------------------------------------ #
 
     def group_traffic_log(self, group: str, bucket: int) -> float:
-        return self.traffic.get((group, bucket), 0.0)
+        if (group, bucket) in self.traffic:
+            return self.traffic[(group, bucket)]
+        if self.prior is not None:
+            return self.prior.log_slowdown(group, bucket)
+        return 0.0
 
     def traffic_log(self, edge: EdgeMeta, bucket: int) -> float:
         return max(0.0, self.group_traffic_log(self.group_of(edge), bucket)
@@ -146,8 +289,10 @@ class FittedSpeedModel:
 
     def diagnose(self, edge: EdgeMeta) -> SegmentDiagnosis:
         p = self.policy
-        peak_bucket = max(range(BUCKET_COUNT), key=lambda b: self.traffic_log(edge, b))
-        peak = math.exp(self.traffic_log(edge, peak_bucket))
+        g = self.group_of(edge)
+        observed = [b for b in range(BUCKET_COUNT) if (g, b) in self.traffic] or range(BUCKET_COUNT)
+        peak_bucket = max(observed, key=lambda b: self.traffic.get((g, b), 0.0))
+        peak = math.exp(max(0.0, self.traffic.get((g, peak_bucket), 0.0)))
         cf = self.condition_factor(edge.segment_id)
         w = self.weight.get(edge.segment_id, 0.0)
         if w < p.diagnose_min_weight:
@@ -186,7 +331,8 @@ class FittedSpeedModel:
 def fit_speed_model(edges: dict[str, EdgeMeta], samples: Iterable[SpeedSample], now: datetime,
                     buckets: TimeBuckets,
                     group_of: Callable[[EdgeMeta], str] = default_group,
-                    policy: SpeedModelPolicy = DEFAULT_SPEED_POLICY) -> FittedSpeedModel:
+                    policy: SpeedModelPolicy = DEFAULT_SPEED_POLICY,
+                    prior: CongestionPrior | None = DEFAULT_CONGESTION_PRIOR) -> FittedSpeedModel:
     window = timedelta(days=policy.window_days)
     kept = [s for s in samples
             if s.segment_id in edges and s.speed_kmh > 0 and timedelta(0) <= now - s.observed_at <= window]
@@ -207,17 +353,20 @@ def fit_speed_model(edges: dict[str, EdgeMeta], samples: Iterable[SpeedSample], 
         obs.append(_Obs(s.segment_id, group_of(edge), buckets.of(s.observed_at), r, w))
         drivers[s.segment_id].add(s.driver_id)
 
-    model = FittedSpeedModel(buckets, group_of, policy, edges)
+    model = FittedSpeedModel(buckets, group_of, policy, edges, prior=prior)
     c: dict[str, float] = {}
     t: dict[tuple[str, int], float] = {}
     u: dict[tuple[str, int], float] = {}
+
+    def prior_target(gb: tuple[str, int]) -> float:
+        return prior.log_slowdown(gb[0], gb[1]) if prior is not None else 0.0
 
     for _ in range(policy.iterations):
         raw_t = _shrunk_means(
             obs, key=lambda o: (o.group, o.bucket),
             residual=lambda o: o.r - c.get(o.seg, 0.0) - u.get((o.seg, o.bucket), 0.0),
             k=policy.traffic_prior_weight,
-            target=lambda _: 0.0)
+            target=prior_target)
         t = _anchor_quiet_hours(raw_t, policy)
 
         model.traffic = t

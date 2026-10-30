@@ -1,4 +1,4 @@
-﻿import statistics
+import statistics
 import sys
 import time
 from datetime import datetime, timezone

@@ -127,8 +127,14 @@ class Dispatcher:
                 "excludedDriverIds": [d for (ride_id, d) in refused if ride_id == r.id],
             })
 
-        result = run_cycle({"drivers": drivers_state, "riders": riders_state}, now,
-                           self.ctx.routes.pickup_eta, self.config, self.rng)
+        result = await asyncio.to_thread(
+            run_cycle,
+            {"drivers": drivers_state, "riders": riders_state},
+            now,
+            self.ctx.routes.pickup_eta,
+            self.config,
+            self.rng,
+        )
         new_driver = {d["id"]: d for d in result.state["drivers"]}
 
         # Offers for drivers who dropped out (went offline, stale GPS, got busy) die.

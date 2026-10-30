@@ -2,6 +2,7 @@
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from routing.turns import TurnModel
 
 from routing import (
     AUTO, BIKE, CAR, EdgeMeta, LocalAStarRouter, MultiVehicleRouter, RoadAccess, RoadClass, RoadGraph,
@@ -65,6 +66,49 @@ class TurnClassificationTests(unittest.TestCase):
     def test_only_restriction(self):
         only = TurnRestrictions(only={"AC": frozenset({"CX"})})
         self.assertEqual(route(service(square(), restrictions=only)).segments, ["AB", "BD"])
+
+
+class TurnModelCacheTests(unittest.TestCase):
+    def test_cache_evicts_least_recently_used_entry(self):
+        from unittest.mock import patch
+
+        edges = square()
+        model = TurnModel(CAR.turns)
+
+        first = ("AB", "BD")
+        second = ("AC", "CD")
+        third = ("BD", "AB")
+
+        with patch("routing.turns.MAX_TURN_CACHE_ENTRIES", 2):
+            model.cost_s(edges["AB"], edges["BD"])
+            model.cost_s(edges["AC"], edges["CD"])
+
+            # Make the first entry recently used.
+            model.cost_s(edges["AB"], edges["BD"])
+
+            # Adding a third entry should evict the second.
+            model.cost_s(edges["BD"], edges["AB"])
+
+        self.assertIn(first, model._cache)
+        self.assertIn(third, model._cache)
+        self.assertNotIn(second, model._cache)
+        self.assertEqual(len(model._cache), 2)
+
+    def test_restricted_turn_is_cached(self):
+        edges = square()
+        model = TurnModel(
+            CAR.turns,
+            restrictions=TurnRestrictions(
+                banned=frozenset({("AC", "CD")})
+            ),
+        )
+
+        first = model.cost_s(edges["AC"], edges["CD"])
+        second = model.cost_s(edges["AC"], edges["CD"])
+
+        self.assertEqual(first, float("inf"))
+        self.assertEqual(second, float("inf"))
+        self.assertIn(("AC", "CD"), model._cache)
 
 
 class PointDelayTests(unittest.TestCase):

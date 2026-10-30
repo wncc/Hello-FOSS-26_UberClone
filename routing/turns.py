@@ -7,8 +7,10 @@ of the edge cost and never scaled by road priority.
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
+from threading import Lock
 
 from .models import EdgeMeta
 from .vehicles import TurnCosts
@@ -16,6 +18,7 @@ from .vehicles import TurnCosts
 LEFT_HAND_TRAFFIC = True   # India
 STRAIGHT_MAX_DEG = 25.0
 U_TURN_MIN_DEG = 150.0
+MAX_TURN_CACHE_ENTRIES = 10_000
 
 
 class Turn(str, Enum):
@@ -86,8 +89,15 @@ class TurnModel:
     costs: TurnCosts
     restrictions: TurnRestrictions = NO_RESTRICTIONS
     left_hand_traffic: bool = LEFT_HAND_TRAFFIC
-    _cache: dict[tuple[str, str], float] = field(
-        default_factory=dict,
+    _cache: OrderedDict[tuple[str, str], float] = field(
+        default_factory=OrderedDict,
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+    _cache_lock: Lock = field(
+        default_factory=Lock,
         init=False,
         repr=False,
         compare=False,
@@ -96,14 +106,29 @@ class TurnModel:
 
     def cost_s(self, inbound: EdgeMeta, outbound: EdgeMeta) -> float:
         key = (inbound.segment_id, outbound.segment_id)
-        cached = self._cache.get(key)
-        if cached is None:
-            cached = turn_cost_s(
-                inbound,
-                outbound,
-                self.costs,
-                self.restrictions,
-                self.left_hand_traffic,
-            )
-            self._cache[key] = cached
-        return cached
+
+        with self._cache_lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+
+        cost = turn_cost_s(
+            inbound,
+            outbound,
+            self.costs,
+            self.restrictions,
+            self.left_hand_traffic,
+        )
+
+        with self._cache_lock:
+            # Another thread may have inserted this key meanwhile.
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+
+            self._cache[key] = cost
+
+            if len(self._cache) > MAX_TURN_CACHE_ENTRIES:
+                self._cache.popitem(last=False)
+
+        return cost

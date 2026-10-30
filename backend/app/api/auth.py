@@ -69,7 +69,13 @@ async def verify_otp(body: OtpVerifyIn, ctx: AppContext = Depends(get_ctx),
         raise HTTPException(401, "wrong code")
     await session.delete(otp)
 
+    if body.admin_login and phone not in ctx.settings.admin_phones:
+        await session.commit()
+        raise HTTPException(401, "admin access is not configured for this number")
     user = await session.scalar(select(User).where(User.phone == phone))
+    if body.admin_login and user is not None and user.role is not Role.ADMIN:
+        await session.commit()
+        raise HTTPException(401, "this account does not have admin access")
     if user is None:
         role = Role.ADMIN if phone in ctx.settings.admin_phones else Role(body.role)
         user = User(phone=phone, role=role)

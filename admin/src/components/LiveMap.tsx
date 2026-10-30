@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   CircleMarker,
   MapContainer,
@@ -12,10 +12,13 @@ import type { AdminMapData } from "../lib/api";
 
 interface LiveMapProps {
   data: AdminMapData;
+  fitRequest: number;
 }
 
-function FitMapToData({ data }: LiveMapProps) {
+function FitMapToData({ data, fitRequest }: LiveMapProps) {
   const map = useMap();
+  const hasInitialFit = useRef(false);
+  const lastFitRequest = useRef(fitRequest);
 
   useEffect(() => {
     const points: LatLngExpression[] = [
@@ -30,6 +33,10 @@ function FitMapToData({ data }: LiveMapProps) {
 
     if (points.length === 0) return;
 
+    const requestedFit = fitRequest !== lastFitRequest.current;
+
+    if (hasInitialFit.current && !requestedFit) return;
+
     if (points.length === 1) {
       map.setView(points[0], 14);
     } else {
@@ -38,12 +45,15 @@ function FitMapToData({ data }: LiveMapProps) {
         maxZoom: 14,
       });
     }
-  }, [data, map]);
+
+    hasInitialFit.current = true;
+    lastFitRequest.current = fitRequest;
+  }, [data, fitRequest, map]);
 
   return null;
 }
 
-export default function LiveMap({ data }: LiveMapProps) {
+export default function LiveMap({ data, fitRequest }: LiveMapProps) {
   return (
     <div className="live-map">
       <MapContainer
@@ -57,7 +67,7 @@ export default function LiveMap({ data }: LiveMapProps) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        <FitMapToData data={data} />
+        <FitMapToData data={data} fitRequest={fitRequest} />
 
         {data.drivers.map((driver) => (
           <CircleMarker

@@ -195,6 +195,45 @@ def test_roles_are_enforced(client):
     assert client.get("/me").status_code == 401
 
 
+def test_failed_admin_login_does_not_create_user(client):
+    phone = "+919888888888"
+
+    code = client.post(
+        "/auth/otp/request",
+        json={"phone": phone},
+    ).json()["dev_code"]
+
+    failed = client.post(
+        "/auth/otp/verify",
+        json={
+            "phone": phone,
+            "code": code,
+            "role": "rider",
+            "admin_login": True,
+        },
+    )
+
+    assert failed.status_code == 401
+
+    # The failed admin login must not have created a rider account.
+    code = client.post(
+        "/auth/otp/request",
+        json={"phone": phone},
+    ).json()["dev_code"]
+
+    normal_login = client.post(
+        "/auth/otp/verify",
+        json={
+            "phone": phone,
+            "code": code,
+            "role": "driver",
+        },
+    )
+
+    assert normal_login.status_code == 200
+    assert normal_login.json()["user"]["role"] == "driver"
+
+
 # --------------------------------------------------------------------------- #
 # Admin approval
 # --------------------------------------------------------------------------- #

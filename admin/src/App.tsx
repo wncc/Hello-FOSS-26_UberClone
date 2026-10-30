@@ -115,6 +115,7 @@ function App() {
   });
   const [mapLoading, setMapLoading] = useState(false);
   const [mapError, setMapError] = useState("");
+  const [mapFitRequest, setMapFitRequest] = useState(0);
 
   const loadDashboard = useCallback(async () => {
     setDataLoading(true);
@@ -858,6 +859,13 @@ function App() {
                   <RefreshCw size={16} />
                   Refresh
                 </button>
+                <button
+                  className="refresh-button"
+                  onClick={() => setMapFitRequest((value) => value + 1)}
+                >
+                  <MapPinned size={16} />
+                  Fit map
+                </button>
               </div>
 
               {mapError && (
@@ -883,7 +891,7 @@ function App() {
                 </span>
               </div>
 
-              <LiveMap data={mapData} />
+              <LiveMap data={mapData} fitRequest={mapFitRequest} />
 
               <div className="map-footer">
                 <span>

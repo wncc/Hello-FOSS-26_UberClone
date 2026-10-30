@@ -233,7 +233,7 @@ export async function verifyOtp(
   // Requesting the rider role does not grant admin privileges.
   return request("/auth/otp/verify", {
     method: "POST",
-    body: JSON.stringify({ phone, code, role: "rider" }),
+    body: JSON.stringify({ phone, code, role: "rider", admin_login: true }),
   });
 }
 

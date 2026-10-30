@@ -25,6 +25,7 @@ class OtpVerifyIn(BaseModel):
     phone: str
     code: str = Field(min_length=4, max_length=8)
     role: Literal["rider", "driver"] = "rider"   # used when the account is created
+    admin_login: bool = False
 
 
 class TokenOut(BaseModel):

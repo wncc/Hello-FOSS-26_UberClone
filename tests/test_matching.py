@@ -213,6 +213,19 @@ class RoutingIntegrationTests(unittest.TestCase):
         cycle([driver("B", *RIVER["E"], vehicle="bike")], riders, self.config, eta=self.eta)
         self.assertEqual(riders[0]["status"], "ping_pending")
 
+    def test_pickup_estimate_uses_road_distance(self):
+        # NEAR is straight-line close to R (~780 m), but road distance across the bridge is ~7.1 km.
+        dist_m, eta_s = self.eta.pickup_estimate(RIVER["N"], RIVER["R"], VehicleType.CAR, NOW)
+        self.assertGreater(dist_m, 5000)
+        self.assertAlmostEqual(dist_m, 7057, delta=10)
+        self.assertAlmostEqual(eta_s, 867, delta=10)
+
+        # Straight-line estimate returns straight-line distance x 1.4 (~778 m).
+        sl_dist, sl_eta = StraightLineEta().pickup_estimate(RIVER["N"], RIVER["R"], VehicleType.CAR, NOW)
+        self.assertLess(sl_dist, 1000)
+        self.assertAlmostEqual(sl_dist, 778, delta=10)
+        self.assertAlmostEqual(sl_eta, 93, delta=5)
+
 
 class GridIndexTests(unittest.TestCase):
     def test_matches_brute_force(self):

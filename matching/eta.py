@@ -21,6 +21,11 @@ class EtaProvider(Protocol):
     def pickup_eta_s(self, driver: LatLng, rider: LatLng, vehicle: VehicleType, at: datetime) -> float | None:
         """Seconds, or None if the rider is unreachable for this vehicle."""
 
+    def pickup_estimate(
+        self, driver: LatLng, rider: LatLng, vehicle: VehicleType, at: datetime
+    ) -> tuple[float, float] | None:
+        """(distance_m, duration_s) or None if unreachable."""
+
 
 class StraightLineEta:
     """Straight-line distance x a typical city detour factor, at the uniform routing speed."""
@@ -31,6 +36,12 @@ class StraightLineEta:
 
     def pickup_eta_s(self, driver: LatLng, rider: LatLng, vehicle: VehicleType, at: datetime) -> float | None:
         return haversine_km(driver, rider) * self.detour_factor / self.speed_kmh * 3600.0
+
+    def pickup_estimate(
+        self, driver: LatLng, rider: LatLng, vehicle: VehicleType, at: datetime
+    ) -> tuple[float, float]:
+        km = haversine_km(driver, rider) * self.detour_factor
+        return km * 1000.0, km / self.speed_kmh * 3600.0
 
 
 class RouterEta:
@@ -48,6 +59,19 @@ class RouterEta:
             return None
         result = self.router.route(vehicle, driver, rider, now=at, depart_at=at)
         return None if result is None else result.eta_s
+
+    def pickup_estimate(
+        self,
+        driver: LatLng,
+        rider: LatLng,
+        vehicle: VehicleType,
+        at: datetime,
+    ) -> tuple[float, float] | None:
+        """(distance_m, duration_s) or None if unreachable."""
+        if vehicle not in self.router.services:
+            return None
+        result = self.router.route(vehicle, driver, rider, now=at, depart_at=at)
+        return None if result is None else (result.distance_m, result.eta_s)
 
     def pickup_etas_s(
         self,

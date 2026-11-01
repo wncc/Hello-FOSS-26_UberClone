@@ -43,8 +43,14 @@ class RouteService:
     def pickup_estimate(self, driver: LatLng, pickup: LatLng, vehicle: VehicleType,
                         at: datetime | None = None) -> tuple[int, int]:
         """(distance_m, duration_s) from driver to pickup point."""
+        at = at or datetime.now(timezone.utc)
+        if hasattr(self.pickup_eta, "pickup_estimate"):
+            est = self.pickup_eta.pickup_estimate(driver, pickup, vehicle, at)
+            if est is not None:
+                dist_m, duration_s = est
+                return int(round(dist_m)), int(round(duration_s))
         km = haversine_km(driver, pickup) * DETOUR_FACTOR
-        eta = self.pickup_eta.pickup_eta_s(driver, pickup, vehicle, at or datetime.now(timezone.utc))
+        eta = self.pickup_eta.pickup_eta_s(driver, pickup, vehicle, at)
         duration_s = int(round(eta)) if eta is not None else int(round(km / STRAIGHT_LINE_SPEED_KMH * 3600))
         return int(round(km * 1000)), duration_s
 

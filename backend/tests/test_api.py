@@ -36,6 +36,7 @@ def test_full_ride_lifecycle(client):
     tick(client)
     assert near.events("ride:ping") and far.events("ride:ping")
     assert not auto.events("ride:ping")                 # wrong vehicle type
+    assert near.get("/drivers/me/offer").json()["ride_id"] == ride["id"]
     near_ping = near.events("ride:ping")[0]["data"]
     far_ping = far.events("ride:ping")[0]["data"]
     assert "pin" not in near_ping
@@ -145,6 +146,25 @@ def test_driver_cancel_sends_ride_back_to_searching(client):
     b = driver(client, 12.9730, 77.5946)
     tick(client)
     assert b.events("ride:ping") and len(a.events("ride:ping")) == 1
+
+
+def test_driver_offer_endpoint(client):
+    r = rider(client)
+    d = driver(client, 12.9726, 77.5946)
+    assert d.get("/drivers/me/offer").json() is None
+
+    ride = book(r)
+    tick(client)
+    offer = d.get("/drivers/me/offer").json()
+    assert offer is not None
+    assert offer["ride_id"] == ride["id"]
+    assert offer["pickup_distance_m"] > 0
+    assert offer["pickup_eta_s"] > 0
+    assert "offered_at" in offer
+    assert offer["fare_paise"] == ride["fare_estimate_paise"]
+
+    d.post(f"/rides/{ride['id']}/accept")
+    assert d.get("/drivers/me/offer").json() is None
 
 
 def test_one_active_ride_per_rider(client):

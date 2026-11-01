@@ -90,12 +90,15 @@ async def ride_route(ride_id: str, user: User = Depends(current_user), ctx: AppC
     pickup, drop = (ride.pickup_lat, ride.pickup_lng), (ride.drop_lat, ride.drop_lng)
     trip = ctx.routes.estimate(pickup, drop, vehicle)
     approach = None
+    approach_duration_s = None
     if ride.driver_id and ride.status is RideStatus.DRIVER_ASSIGNED:
         profile = await session.get(DriverProfile, ride.driver_id)
         if profile and profile.lat is not None:
             way = ctx.routes.estimate((profile.lat, profile.lng), pickup, vehicle)
-            approach = way.geometry if way else None
-    return RouteOut(trip=trip.geometry if trip else [pickup, drop], approach=approach)
+            if way:
+                approach = way.geometry
+                approach_duration_s = way.duration_s
+    return RouteOut(trip=trip.geometry if trip else [pickup, drop], approach=approach, approach_duration_s=approach_duration_s)
 
 
 @router.post("/{ride_id}/accept", status_code=202)

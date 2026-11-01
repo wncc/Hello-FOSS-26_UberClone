@@ -60,7 +60,9 @@ export default function RiderRide() {
       <RideMap initialCenter={ride.pickup} pickup={ride.pickup} drop={ride.drop} driver={driverPos} bottomInset={320}
                route={roads?.trip} approach={ride.status === 'driver_assigned' ? roads?.approach : null} />
       <Sheet>
-        <Title style={{ fontSize: 20 }}>{riderStatusText(ride.status)}</Title>
+        <Title style={{ fontSize: 20 }}>
+          {riderStatusText(ride.status, ride.status === 'driver_assigned' ? roads?.approach_duration_s : null)}
+        </Title>
 
         {ride.driver && !isFinished(ride.status) ? (
           <Row style={styles.driverRow}>
@@ -79,6 +81,7 @@ export default function RiderRide() {
         ) : null}
 
         {ride.status === 'searching' ? <Body muted>Pinging {VEHICLE_LABEL[ride.vehicle_type].toLowerCase()} drivers near you…</Body> : null}
+        {ride.status === 'driver_assigned' && roads?.approach_duration_s != null ? <Body muted>Driver is on the way</Body> : null}
         {ride.status === 'driver_arrived' ? <Body>Share the PIN with your driver to start the trip.</Body> : null}
         {ride.status === 'in_progress' ? <Body muted>Heading to {shortAddress(ride.drop.lat, ride.drop.lng, ride.drop.address)}</Body> : null}
 

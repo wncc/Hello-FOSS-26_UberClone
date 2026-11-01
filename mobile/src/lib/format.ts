@@ -41,10 +41,13 @@ export const VEHICLE_ICON: Record<VehicleType, string> = {
 
 export const VEHICLE_ORDER: VehicleType[] = ['bike', 'auto_rickshaw', 'car'];
 
-export function riderStatusText(status: RideStatus): string {
+export function riderStatusText(status: RideStatus, approachDurationS?: number | null): string {
   switch (status) {
     case 'searching': return 'Finding you a driver…';
-    case 'driver_assigned': return 'Driver is on the way';
+    case 'driver_assigned':
+      return approachDurationS != null
+        ? `Arriving in ${formatDuration(approachDurationS)}`
+        : 'Driver is on the way';
     case 'driver_arrived': return 'Driver has arrived';
     case 'in_progress': return 'On the trip';
     case 'completed': return 'Trip completed';

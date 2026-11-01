@@ -52,8 +52,20 @@ def test_full_ride_lifecycle(client):
     assert near.events("ride:confirmed") and far.events("ride:taken")
     assert r.events("ride:driver_assigned")[0]["data"]["driver"]["id"] == near.id
 
+    route_assigned = r.get(f"/rides/{ride['id']}/route").json()
+    assert route_assigned["approach"] is not None
+    assert route_assigned["approach_duration_s"] > 0
+
     assert near.post("/drivers/me/location", {"lat": 12.9720, "lng": 77.5946}).status_code == 204
-    assert r.events("driver:location")[-1]["data"]["lat"] == 12.9720
+    first_loc = r.events("driver:location")[-1]["data"]
+    assert first_loc["lat"] == 12.9720
+    assert first_loc["approach_duration_s"] > 0
+
+    # Immediate second GPS update (< 15 s) should not recalculate the approach route
+    assert near.post("/drivers/me/location", {"lat": 12.9718, "lng": 77.5946}).status_code == 204
+    second_loc = r.events("driver:location")[-1]["data"]
+    assert second_loc["lat"] == 12.9718
+    assert "approach_duration_s" not in second_loc
     assert near.post("/drivers/me/online", {"online": False}).status_code == 409   # mid-ride
 
     assert near.post(f"/rides/{ride['id']}/arrived").json()["status"] == "driver_arrived"
@@ -210,6 +222,7 @@ def test_admin_approves_pending_driver(make_client):
     assert admin.post(f"/admin/drivers/{d.id}/approve").json()["status"] == "approved"
     assert d.post("/drivers/me/online", {"online": True}).status_code == 200
 
+
 def test_admin_map_is_admin_only_and_lists_online_drivers(make_client):
     client = make_client(admin_phones=("+919999999999",))
     admin = Actor(client, "rider", phone="+919999999999")
@@ -294,6 +307,7 @@ def test_routes_follow_the_roads(make_client):
     route = r.get(f"/rides/{ride['id']}/route").json()
     assert [tuple(p) for p in route["trip"]] == [a, corner, c]
     assert route["approach"] is None                                   # no driver yet
+    assert route["approach_duration_s"] is None
 
     far = {"lat": 13.5, "lng": 77.6}                                    # nowhere near the mapped roads
     res = r.post("/rides/estimate", {"pickup": pickup, "drop": far})

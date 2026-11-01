@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 
-import { useSession } from './session';
+import { useServerEvents, useSession } from './session';
 import type { RideRoute, RideStatus } from './types';
 
 /**
  * Road geometry for a ride: the trip (pickup -> drop) and, while the driver is on the way,
- * their path to the pickup. Refetched whenever the ride's status changes.
+ * their path to the pickup and live ETA. Refetched whenever the ride's status changes.
  */
 export function useRideRoute(rideId: string, status: RideStatus | undefined): RideRoute | null {
   const { api } = useSession();
@@ -21,6 +21,13 @@ export function useRideRoute(rideId: string, status: RideStatus | undefined): Ri
       alive = false;
     };
   }, [api, rideId, status]);
+
+  useServerEvents((e) => {
+    if (e.event === 'driver:location' && e.data.ride_id === rideId && e.data.approach_duration_s != null) {
+      const duration = e.data.approach_duration_s;
+      setRoute((r) => (r ? { ...r, approach_duration_s: duration } : { trip: [], approach: null, approach_duration_s: duration }));
+    }
+  });
 
   return route;
 }

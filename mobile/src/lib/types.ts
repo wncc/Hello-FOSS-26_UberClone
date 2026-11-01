@@ -49,6 +49,7 @@ export interface EstimateOption {
 export interface RideRoute {
   trip: Path;
   approach: Path | null;
+  approach_duration_s?: number | null;
 }
 
 export interface Party {
@@ -125,7 +126,6 @@ export type ServerEvent =
   | { event: 'ride:confirmed'; data: RideSummary }
   | { event: 'ride:taken'; data: { ride_id: string } }
   | { event: 'ride:driver_assigned'; data: RideSummary & { driver: Partial<DriverInfo> } }
-  | { event: 'driver:location'; data: { ride_id: string; lat: number; lng: number; heading: number | null } }
   | { event: 'ride:driver_arrived'; data: RideSummary }
   | { event: 'ride:started'; data: RideSummary }
   | { event: 'ride:completed'; data: RideSummary & { fare_final_paise: number } }
@@ -133,6 +133,7 @@ export type ServerEvent =
   | { event: 'ride:driver_cancelled'; data: RideSummary & { reason: string | null } }
   | { event: 'ride:no_drivers'; data: RideSummary }
   | { event: 'pong'; data: Record<string, never> }
-  | { event: 'error'; data: { message: string } };
+  | { event: 'error'; data: { message: string } }
+  | { event: 'driver:location'; data: { ride_id: string; lat: number; lng: number; heading: number | null; approach_duration_s?: number | null } }
 
 export type EventName = ServerEvent['event'];

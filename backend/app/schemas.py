@@ -99,7 +99,7 @@ class EstimateOption(BaseModel):
 class RouteOut(BaseModel):
     trip: list[tuple[float, float]]            # pickup -> drop
     approach: list[tuple[float, float]] | None = None   # driver -> pickup, while the driver is on the way
-
+    approach_duration_s: int | None = None           # estimated seconds for the driver to reach the pickup
 
 class EstimateOut(BaseModel):
     options: list[EstimateOption]

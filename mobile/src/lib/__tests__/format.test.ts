@@ -1,5 +1,5 @@
 import { expect, test } from '@jest/globals';
-import { directionsUrl, formatDistance, formatDuration, formatFare, isFinished, normalizeIndianPhone } from '../format';
+import { directionsUrl, formatDistance, formatDuration, formatFare, isFinished, normalizeIndianPhone, riderStatusText } from '../format';
 
 test('fares in rupees', () => {
   expect(formatFare(12300)).toBe('₹123');
@@ -30,4 +30,12 @@ test('finished statuses and directions link', () => {
   expect(isFinished('completed')).toBe(true);
   expect(isFinished('in_progress')).toBe(false);
   expect(directionsUrl({ lat: 12.97, lng: 77.59 })).toContain('destination=12.97,77.59');
+});
+
+test('rider status text shows live arrival countdown', () => {
+  expect(riderStatusText('driver_assigned')).toBe('Driver is on the way');
+  expect(riderStatusText('driver_assigned', null)).toBe('Driver is on the way');
+  expect(riderStatusText('driver_assigned', 240)).toBe('Arriving in 4 min');
+  expect(riderStatusText('driver_assigned', 20)).toBe('Arriving in 1 min');
+  expect(riderStatusText('driver_arrived', 120)).toBe('Driver has arrived');
 });

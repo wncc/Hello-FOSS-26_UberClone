@@ -28,6 +28,20 @@ def test_full_ride_lifecycle(client):
     assert set(options) == {"car", "auto_rickshaw", "bike"}
     assert options["car"]["drivers_nearby"] == 2 and options["auto_rickshaw"]["drivers_nearby"] == 1
     assert options["bike"]["fare_paise"] < options["auto_rickshaw"]["fare_paise"] < options["car"]["fare_paise"]
+    car_bd = options["car"]["breakdown"]
+    assert car_bd is not None
+    assert car_bd["base_paise"] > 0
+    assert car_bd["booking_fee_paise"] == 1000
+    assert car_bd["total_paise"] == options["car"]["fare_paise"]
+    assert (
+        car_bd["base_paise"]
+        + car_bd["distance_paise"]
+        + car_bd["duration_paise"]
+        + car_bd["booking_fee_paise"]
+        + car_bd["minimum_topup_paise"]
+        + car_bd["rounding_paise"]
+        == car_bd["total_paise"]
+    )
 
     ride = book(r)
     assert ride["status"] == "searching" and len(ride["pin"]) == 4

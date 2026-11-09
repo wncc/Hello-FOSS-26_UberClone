@@ -37,6 +37,16 @@ export interface Tokens {
 /** [lat, lng] points along the roads. */
 export type Path = [number, number][];
 
+export interface FareBreakdown {
+  base_paise: number;
+  distance_paise: number;
+  duration_paise: number;
+  booking_fee_paise: number;
+  minimum_topup_paise: number;
+  rounding_paise: number;
+  total_paise: number;
+}
+
 export interface EstimateOption {
   vehicle_type: VehicleType;
   fare_paise: number;
@@ -44,6 +54,7 @@ export interface EstimateOption {
   duration_s: number;
   drivers_nearby: number;
   route: Path;
+  breakdown?: FareBreakdown | null;
 }
 
 export interface RideRoute {

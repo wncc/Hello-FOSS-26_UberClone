@@ -87,6 +87,16 @@ class EstimateIn(BaseModel):
     drop: PlaceIn
 
 
+class FareBreakdownOut(BaseModel):
+    base_paise: int
+    distance_paise: int
+    duration_paise: int
+    booking_fee_paise: int
+    minimum_topup_paise: int
+    rounding_paise: int
+    total_paise: int
+
+
 class EstimateOption(BaseModel):
     vehicle_type: VehicleType
     fare_paise: int
@@ -94,6 +104,7 @@ class EstimateOption(BaseModel):
     duration_s: int
     drivers_nearby: int
     route: list[tuple[float, float]] = []      # [lat, lng] along the roads, pickup -> drop
+    breakdown: FareBreakdownOut | None = None
 
 
 class RouteOut(BaseModel):

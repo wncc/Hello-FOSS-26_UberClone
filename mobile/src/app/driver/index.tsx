@@ -1,10 +1,10 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useReducer, useState } from 'react';
-import { StyleSheet, Switch, Text, View } from 'react-native';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { AccessibilityInfo, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RideMap } from '@/components/RideMap';
-import { Body, Button, ErrorText, Row, Sheet, Title, colors, space } from '@/components/ui';
+import { Body, Button, Chip, ErrorText, Row, Sheet, Title, colors, space } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, formatDistance, formatDuration, formatFare, shortAddress } from '@/lib/format';
 import { DEFAULT_CENTER, useDriverLocationReporter } from '@/lib/location';
@@ -67,6 +67,16 @@ export default function DriverHome() {
     if (state.mode === 'assigned') router.replace(`/driver/trip/${state.rideId}`);
   }, [state]);
 
+  const announcedOfferId = useRef<string | null>(null);
+  useEffect(() => {
+    if (state.mode === 'offered' && state.offer.ride_id !== announcedOfferId.current) {
+      announcedOfferId.current = state.offer.ride_id;
+      AccessibilityInfo.announceForAccessibility(
+        `New ride offer: ${formatFare(state.offer.fare_paise)}. Pickup at ${shortAddress(state.offer.pickup.lat, state.offer.pickup.lng, state.offer.pickup.address)}`
+      );
+    }
+  }, [state]);
+
   async function toggleOnline(value: boolean) {
     setBusy(true);
     setError(null);
@@ -109,14 +119,20 @@ export default function DriverHome() {
                bottomInset={300} />
       <SafeAreaView edges={['top']} style={styles.topBar}>
         <Row style={{ justifyContent: 'space-between' }}>
-          <Row style={styles.chip}>
-            <Text style={{ fontWeight: '700' }}>{online ? '● Online' : '○ Offline'}</Text>
-            <Switch value={online} onValueChange={toggleOnline} disabled={busy || profile?.status !== 'approved'} />
+          <Row style={styles.statusChip}>
+            <Text style={{ fontWeight: '700', color: colors.text }}>{online ? '● Online' : '○ Offline'}</Text>
+            <Switch
+              accessibilityRole="switch"
+              accessibilityLabel={online ? 'Go offline' : 'Go online'}
+              value={online}
+              onValueChange={toggleOnline}
+              disabled={busy || profile?.status !== 'approved'}
+            />
           </Row>
           <Row>
-            <Text style={styles.chip} onPress={() => router.push('/driver/history')}>Earnings</Text>
-            <Text style={styles.chip} onPress={() => router.push('/driver/vehicle')}>Vehicle</Text>
-            <Text style={styles.chip} onPress={signOut}>Log out</Text>
+            <Chip text="Earnings" onPress={() => router.push('/driver/history')} />
+            <Chip text="Vehicle" onPress={() => router.push('/driver/vehicle')} />
+            <Chip text="Log out" onPress={signOut} />
           </Row>
         </Row>
       </SafeAreaView>
@@ -172,9 +188,9 @@ export default function DriverHome() {
 
 const styles = StyleSheet.create({
   topBar: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: space.md, paddingTop: space.sm },
-  chip: {
-    backgroundColor: colors.bg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, overflow: 'hidden',
-    fontWeight: '600', color: colors.text, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4,
+  statusChip: {
+    backgroundColor: colors.bg, minHeight: 44, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 22,
+    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4,
   },
   countdown: { fontSize: 22, fontWeight: '800', color: colors.danger },
 });

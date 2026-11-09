@@ -24,8 +24,15 @@ export function RideMap(props: RideMapProps) {
     if (ready) web.current?.injectJavaScript(script);
   }, [ready, script]);
 
+  const mapDescription = props.onCenterChange
+    ? `Map: drag to choose ${props.pinLabel ?? 'location'}`
+    : 'Interactive map showing route and locations';
+
   return (
-    <View style={mapBoxStyle(props.bottomInset, !!props.onCenterChange)}>
+    <View
+      accessible={true}
+      accessibilityLabel={mapDescription}
+      style={mapBoxStyle(props.bottomInset, !!props.onCenterChange)}>
       <WebView
         ref={web}
         source={{ html, baseUrl: 'https://ride.app/' }}

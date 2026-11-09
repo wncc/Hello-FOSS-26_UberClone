@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RideMap } from '@/components/RideMap';
 import { Body, Button, ErrorText, Input, Loading, Row, Sheet, Title, colors, space } from '@/components/ui';
@@ -11,6 +11,23 @@ import { useDriverLocationReporter } from '@/lib/location';
 import { useServerEvents, useSession } from '@/lib/session';
 import { useRideRoute } from '@/lib/useRideRoute';
 import type { Ride } from '@/lib/types';
+
+function driverTripAnnouncement(ride: Ride): string {
+  switch (ride.status) {
+    case 'driver_assigned':
+      return `New trip. Pick up at ${shortAddress(ride.pickup.lat, ride.pickup.lng, ride.pickup.address)}.`;
+    case 'driver_arrived':
+      return 'Arrived at pickup. Ask rider for 4-digit PIN.';
+    case 'in_progress':
+      return `Trip in progress. Drop off at ${shortAddress(ride.drop.lat, ride.drop.lng, ride.drop.address)}.`;
+    case 'completed':
+      return `Trip completed. Collect ${formatFare(ride.fare_final_paise ?? ride.fare_estimate_paise)} in cash.`;
+    case 'cancelled':
+      return 'Ride was cancelled.';
+    default:
+      return '';
+  }
+}
 
 export default function DriverTrip() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -28,6 +45,14 @@ export default function DriverTrip() {
   }, [api, id]);
 
   useEffect(load, [load]);
+
+  const lastAnnouncedStatus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ride || ride.status === lastAnnouncedStatus.current) return;
+    lastAnnouncedStatus.current = ride.status;
+    const text = driverTripAnnouncement(ride);
+    if (text) AccessibilityInfo.announceForAccessibility(text);
+  }, [ride]);
 
   useServerEvents((e) => {
     if (e.event === 'ride:cancelled' && e.data.ride_id === id) {
@@ -139,7 +164,14 @@ function Finished({ ride }: { ride: Ride }) {
       <Body muted>Rate the rider</Body>
       <Row style={{ justifyContent: 'center', gap: space.md }}>
         {[1, 2, 3, 4, 5].map((n) => (
-          <Pressable key={n} onPress={() => setStars(n)} accessibilityLabel={`${n} stars`}>
+          <Pressable
+            key={n}
+            accessibilityRole="button"
+            accessibilityLabel={`${n} star${n === 1 ? '' : 's'}`}
+            accessibilityState={{ selected: n <= stars }}
+            onPress={() => setStars(n)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.starButton}>
             <Text style={{ fontSize: 36, color: n <= stars ? colors.warning : colors.border }}>★</Text>
           </Pressable>
         ))}
@@ -151,5 +183,6 @@ function Finished({ ride }: { ride: Ride }) {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.lg },
+  starButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   fare: { fontSize: 18, fontWeight: '800', color: colors.text },
 });

@@ -33,9 +33,22 @@ export function RideMap(props: RideMapProps) {
     if (ready) (frame.current?.contentWindow as MapWindow | null)?.rideMap?.update(JSON.parse(state));
   }, [ready, state]);
 
+  const mapDescription = props.onCenterChange
+    ? `Map: drag to choose ${props.pinLabel ?? 'location'}`
+    : 'Interactive map showing route and locations';
+
   return (
-    <View style={mapBoxStyle(props.bottomInset, !!props.onCenterChange)}>
-      <iframe ref={frame} srcDoc={html} title="map" style={{ border: 0, width: '100%', height: '100%' }} />
+    <View
+      accessible={true}
+      accessibilityLabel={mapDescription}
+      style={mapBoxStyle(props.bottomInset, !!props.onCenterChange)}>
+      <iframe
+        ref={frame}
+        srcDoc={html}
+        title="map"
+        aria-label={mapDescription}
+        style={{ border: 0, width: '100%', height: '100%' }}
+      />
       <MapOverlays picking={!!props.onCenterChange} pinLabel={props.pinLabel} error={error} />
     </View>
   );

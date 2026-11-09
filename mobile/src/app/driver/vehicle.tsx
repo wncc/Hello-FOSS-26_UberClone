@@ -44,8 +44,16 @@ export default function Vehicle() {
       <Body muted>Riders see these details when you’re assigned to their ride.</Body>
       <Row>
         {VEHICLE_ORDER.map((v) => (
-          <Pressable key={v} onPress={() => setVehicle(v)} style={[styles.choice, vehicle === v && styles.selected]}>
-            <Text style={{ fontSize: 30 }}>{VEHICLE_ICON[v]}</Text>
+          <Pressable
+            key={v}
+            accessibilityRole="button"
+            accessibilityLabel={VEHICLE_LABEL[v]}
+            accessibilityState={{ selected: vehicle === v }}
+            onPress={() => setVehicle(v)}
+            style={[styles.choice, vehicle === v && styles.selected]}>
+            <Text style={{ fontSize: 30 }} accessibilityElementsHidden={true} importantForAccessibility="no-hide-descendants">
+              {VEHICLE_ICON[v]}
+            </Text>
             <Text style={styles.choiceText}>{VEHICLE_LABEL[v]}</Text>
           </Pressable>
         ))}
@@ -62,7 +70,7 @@ export default function Vehicle() {
 
 const styles = StyleSheet.create({
   choice: {
-    flex: 1, alignItems: 'center', padding: space.md, borderRadius: 12, borderWidth: 2, borderColor: colors.border, gap: 4,
+    flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 64, padding: space.md, borderRadius: 12, borderWidth: 2, borderColor: colors.border, gap: 4,
   },
   selected: { borderColor: colors.primary, backgroundColor: colors.surface },
   choiceText: { fontWeight: '600', color: colors.text },

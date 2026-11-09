@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RideMap } from '@/components/RideMap';
 import { Body, Button, ErrorText, Loading, Row, Sheet, Title, colors, space } from '@/components/ui';
@@ -13,6 +13,27 @@ import { useRideRoute } from '@/lib/useRideRoute';
 import type { Ride } from '@/lib/types';
 
 const POLL_MS = 10_000;   // safety net if a live event is missed
+
+function riderStatusAnnouncement(ride: Ride): string {
+  switch (ride.status) {
+    case 'searching':
+      return 'Searching for nearby drivers.';
+    case 'driver_assigned':
+      return `Driver assigned: ${ride.driver?.name ?? 'Your driver'}.`;
+    case 'driver_arrived':
+      return `Driver has arrived. Share your PIN: ${ride.pin ?? ''}.`;
+    case 'in_progress':
+      return `Trip started. Heading to ${shortAddress(ride.drop.lat, ride.drop.lng, ride.drop.address)}.`;
+    case 'completed':
+      return `Trip completed. Pay ${formatFare(ride.fare_final_paise ?? ride.fare_estimate_paise)} in cash to your driver.`;
+    case 'cancelled':
+      return 'Ride was cancelled.';
+    case 'no_drivers':
+      return 'No drivers available right now.';
+    default:
+      return '';
+  }
+}
 
 export default function RiderRide() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -36,6 +57,14 @@ export default function RiderRide() {
     setRide((r) => (r ? applyRiderEvent(r, e) : r));
     if (e.event === 'ride:driver_assigned' || e.event === 'ride:completed') load();   // full details (driver, fare)
   });
+
+  const lastAnnouncedStatus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ride || ride.status === lastAnnouncedStatus.current) return;
+    lastAnnouncedStatus.current = ride.status;
+    const text = riderStatusAnnouncement(ride);
+    if (text) AccessibilityInfo.announceForAccessibility(text);
+  }, [ride]);
 
   function cancel() {
     confirmAction('Cancel ride?', 'Your driver may already be on the way.', 'Cancel ride', async () => {
@@ -123,7 +152,14 @@ function Completed({ ride }: { ride: Ride }) {
       <Body muted>Rate {ride.driver?.name ?? 'your driver'}</Body>
       <Row style={{ justifyContent: 'center', gap: space.md }}>
         {[1, 2, 3, 4, 5].map((n) => (
-          <Pressable key={n} onPress={() => setStars(n)} accessibilityLabel={`${n} stars`}>
+          <Pressable
+            key={n}
+            accessibilityRole="button"
+            accessibilityLabel={`${n} star${n === 1 ? '' : 's'}`}
+            accessibilityState={{ selected: n <= stars }}
+            onPress={() => setStars(n)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.starButton}>
             <Text style={{ fontSize: 36, color: n <= stars ? colors.warning : colors.border }}>★</Text>
           </Pressable>
         ))}
@@ -137,6 +173,7 @@ function Completed({ ride }: { ride: Ride }) {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.lg },
   driverRow: { backgroundColor: colors.surface, borderRadius: 14, padding: space.md },
+  starButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   strong: { fontSize: 17, fontWeight: '700', color: colors.text },
   pinBox: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6 },
   pinLabel: { color: colors.primaryText, fontSize: 11, fontWeight: '600' },

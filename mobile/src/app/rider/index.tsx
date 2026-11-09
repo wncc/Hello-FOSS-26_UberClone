@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RideMap } from '@/components/RideMap';
-import { Body, Button, ErrorText, Row, Sheet, colors, space } from '@/components/ui';
+import { Body, Button, Chip, ErrorText, Row, Sheet, colors, space } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { VEHICLE_ICON, VEHICLE_LABEL, VEHICLE_ORDER, formatDistance, formatDuration, formatFare, shortAddress } from '@/lib/format';
 import { DEFAULT_CENTER, addressLabel, useCurrentPosition } from '@/lib/location';
@@ -114,7 +114,11 @@ export default function RiderHome() {
       />
       <SafeAreaView edges={['top']} style={styles.topBar} pointerEvents="box-none">
         <Row style={{ justifyContent: 'space-between' }}>
-          {step !== 'pickup' ? <Chip text="‹ Back" onPress={back} /> : <Chip text={`Hi, ${user?.name?.split(' ')[0] ?? ''}`} />}
+          {step !== 'pickup' ? (
+            <Chip text="‹ Back" onPress={back} accessibilityLabel="Go back" />
+          ) : (
+            <Chip text={`Hi, ${user?.name?.split(' ')[0] ?? ''}`} accessibilityRole="none" />
+          )}
           <Row>
             <Chip text="Rides" onPress={() => router.push('/rider/history')} />
             <Chip text="Log out" onPress={signOut} />
@@ -127,9 +131,16 @@ export default function RiderHome() {
           <>
             <Body muted numberOfLines={1}>{shortAddress(pickup!.lat, pickup!.lng, pickup!.address)} → {shortAddress(drop!.lat, drop!.lng, drop!.address)}</Body>
             {options.map((o) => (
-              <Pressable key={o.vehicle_type} onPress={() => setSelected(o.vehicle_type)}
-                         style={[styles.option, selected === o.vehicle_type && styles.optionSelected]}>
-                <Text style={{ fontSize: 28 }}>{VEHICLE_ICON[o.vehicle_type]}</Text>
+              <Pressable
+                key={o.vehicle_type}
+                accessibilityRole="button"
+                accessibilityLabel={`${VEHICLE_LABEL[o.vehicle_type]}, ${formatFare(o.fare_paise)}, ${formatDuration(o.duration_s)}, ${o.drivers_nearby ? `${o.drivers_nearby} nearby` : 'none nearby'}`}
+                accessibilityState={{ selected: selected === o.vehicle_type }}
+                onPress={() => setSelected(o.vehicle_type)}
+                style={[styles.option, selected === o.vehicle_type && styles.optionSelected]}>
+                <Text style={{ fontSize: 28 }} accessibilityElementsHidden={true} importantForAccessibility="no-hide-descendants">
+                  {VEHICLE_ICON[o.vehicle_type]}
+                </Text>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.optionTitle}>{VEHICLE_LABEL[o.vehicle_type]}</Text>
                   <Text style={styles.optionSub}>
@@ -165,21 +176,10 @@ export default function RiderHome() {
   );
 }
 
-function Chip({ text, onPress }: { text: string; onPress?: () => void }) {
-  return (
-    <Pressable onPress={onPress} disabled={!onPress} style={styles.chip}>
-      <Text style={{ fontWeight: '600', color: colors.text }}>{text}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   topBar: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: space.md, paddingTop: space.sm },
-  chip: {
-    backgroundColor: colors.bg, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
-    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4,
-  },
   option: {
+    minHeight: 52,
     flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.sm, borderRadius: 12,
     borderWidth: 2, borderColor: 'transparent',
   },

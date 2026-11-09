@@ -42,13 +42,14 @@ export function ErrorText({ message }: { message: string | null }) {
 
 type ButtonKind = 'primary' | 'secondary' | 'danger' | 'accent';
 
-export function Button({ title, onPress, kind = 'primary', loading, disabled, style }: {
+export function Button({ title, onPress, kind = 'primary', loading, disabled, style, accessibilityLabel }: {
   title: string;
   onPress: () => void;
   kind?: ButtonKind;
   loading?: boolean;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
+  accessibilityLabel?: string;
 }) {
   const bg = { primary: colors.primary, secondary: colors.surface, danger: colors.danger, accent: colors.accent }[kind];
   const fg = kind === 'secondary' ? colors.text : colors.primaryText;
@@ -56,6 +57,8 @@ export function Button({ title, onPress, kind = 'primary', loading, disabled, st
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityState={{ disabled: off, busy: loading }}
       onPress={onPress}
       disabled={off}
       style={({ pressed }) => [styles.button, { backgroundColor: bg, opacity: off ? 0.5 : pressed ? 0.8 : 1 }, style]}>
@@ -64,12 +67,48 @@ export function Button({ title, onPress, kind = 'primary', loading, disabled, st
   );
 }
 
+export function Chip({
+  text,
+  onPress,
+  accessibilityLabel,
+  accessibilityRole = 'button',
+  style,
+}: {
+  text: string;
+  onPress?: () => void;
+  accessibilityLabel?: string;
+  accessibilityRole?: 'button' | 'none';
+  style?: StyleProp<ViewStyle>;
+}) {
+  const isClickable = !!onPress;
+  return (
+    <Pressable
+      accessibilityRole={isClickable ? accessibilityRole : 'none'}
+      accessibilityLabel={accessibilityLabel ?? text}
+      onPress={onPress}
+      disabled={!isClickable}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={({ pressed }) => [
+        styles.chip,
+        { opacity: isClickable && pressed ? 0.8 : 1 },
+        style,
+      ]}>
+      <Text style={styles.chipText}>{text}</Text>
+    </Pressable>
+  );
+}
+
 export function Input(props: TextInputProps & { label?: string }) {
-  const { label, style, ...rest } = props;
+  const { label, style, accessibilityLabel, ...rest } = props;
   return (
     <View style={{ gap: space.xs }}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
-      <TextInput placeholderTextColor={colors.muted} style={[styles.input, style]} {...rest} />
+      <TextInput
+        placeholderTextColor={colors.muted}
+        accessibilityLabel={accessibilityLabel ?? label}
+        style={[styles.input, style]}
+        {...rest}
+      />
     </View>
   );
 }
@@ -106,6 +145,25 @@ const styles = StyleSheet.create({
   label: { fontSize: 14, color: colors.muted },
   error: { color: colors.danger, fontSize: 14 },
   button: { minHeight: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.md },
+  chip: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.bg,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 22,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  chipText: {
+    fontWeight: '600',
+    color: colors.text,
+    fontSize: 14,
+  },
   buttonText: { fontSize: 17, fontWeight: '600' },
   input: {
     minHeight: 52, borderRadius: 12, borderWidth: 1, borderColor: colors.border, paddingHorizontal: space.md,

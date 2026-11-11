@@ -13,7 +13,7 @@ import type { EstimateOption, LatLng, Place, VehicleType } from '@/lib/types';
 
 type Step = 'pickup' | 'drop' | 'choose';
 const SHEET_HEIGHT = 300;
-const CHOOSE_SHEET_HEIGHT = 440;   // three fare options + the book button
+const CHOOSE_SHEET_HEIGHT = 540;   // fare options with breakdown + book button
 
 export default function RiderHome() {
   const { api, user, signOut } = useSession();
@@ -126,19 +126,63 @@ export default function RiderHome() {
         {step === 'choose' ? (
           <>
             <Body muted numberOfLines={1}>{shortAddress(pickup!.lat, pickup!.lng, pickup!.address)} → {shortAddress(drop!.lat, drop!.lng, drop!.address)}</Body>
-            {options.map((o) => (
-              <Pressable key={o.vehicle_type} onPress={() => setSelected(o.vehicle_type)}
-                         style={[styles.option, selected === o.vehicle_type && styles.optionSelected]}>
-                <Text style={{ fontSize: 28 }}>{VEHICLE_ICON[o.vehicle_type]}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.optionTitle}>{VEHICLE_LABEL[o.vehicle_type]}</Text>
-                  <Text style={styles.optionSub}>
-                    {formatDuration(o.duration_s)} · {formatDistance(o.distance_m)} · {o.drivers_nearby ? `${o.drivers_nearby} nearby` : 'none nearby'}
-                  </Text>
-                </View>
-                <Text style={styles.optionTitle}>{formatFare(o.fare_paise)}</Text>
-              </Pressable>
-            ))}
+            {options.map((o) => {
+              const isSelected = selected === o.vehicle_type;
+              return (
+                <Pressable
+                  key={o.vehicle_type}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${VEHICLE_LABEL[o.vehicle_type]}, ${formatFare(o.fare_paise)}, ${formatDuration(o.duration_s)}, ${o.drivers_nearby ? `${o.drivers_nearby} nearby` : 'none nearby'}`}
+                  accessibilityState={{ selected: isSelected }}
+                  onPress={() => setSelected(o.vehicle_type)}
+                  style={[styles.option, isSelected && styles.optionSelected]}>
+                  <View style={styles.optionHeader}>
+                    <Text style={{ fontSize: 28 }}>{VEHICLE_ICON[o.vehicle_type]}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.optionTitle}>{VEHICLE_LABEL[o.vehicle_type]}</Text>
+                      <Text style={styles.optionSub}>
+                        {formatDuration(o.duration_s)} · {formatDistance(o.distance_m)} · {o.drivers_nearby ? `${o.drivers_nearby} nearby` : 'none nearby'}
+                      </Text>
+                    </View>
+                    <Text style={styles.optionTitle}>{formatFare(o.fare_paise)}</Text>
+                  </View>
+                  {isSelected && o.breakdown ? (
+                    <View style={styles.breakdown}>
+                      <Row style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>Base fare</Text>
+                        <Text style={styles.breakdownValue}>{formatFare(o.breakdown.base_paise)}</Text>
+                      </Row>
+                      <Row style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>Distance ({formatDistance(o.distance_m)})</Text>
+                        <Text style={styles.breakdownValue}>{formatFare(o.breakdown.distance_paise)}</Text>
+                      </Row>
+                      <Row style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>Time ({formatDuration(o.duration_s)})</Text>
+                        <Text style={styles.breakdownValue}>{formatFare(o.breakdown.duration_paise)}</Text>
+                      </Row>
+                      {o.breakdown.booking_fee_paise > 0 ? (
+                        <Row style={styles.breakdownRow}>
+                          <Text style={styles.breakdownLabel}>Booking fee</Text>
+                          <Text style={styles.breakdownValue}>{formatFare(o.breakdown.booking_fee_paise)}</Text>
+                        </Row>
+                      ) : null}
+                      {o.breakdown.minimum_topup_paise > 0 ? (
+                        <Row style={styles.breakdownRow}>
+                          <Text style={styles.breakdownLabel}>Minimum fare top-up</Text>
+                          <Text style={styles.breakdownValue}>{formatFare(o.breakdown.minimum_topup_paise)}</Text>
+                        </Row>
+                      ) : null}
+                      {o.breakdown.rounding_paise > 0 ? (
+                        <Row style={styles.breakdownRow}>
+                          <Text style={styles.breakdownLabel}>Rounding</Text>
+                          <Text style={styles.breakdownValue}>{formatFare(o.breakdown.rounding_paise)}</Text>
+                        </Row>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </Pressable>
+              );
+            })}
             <ErrorText message={error} />
             <Button title={selected ? `Book ${VEHICLE_LABEL[selected]} · Cash` : 'Choose a ride'} onPress={book}
                     loading={busy} disabled={!selected} />
@@ -180,9 +224,15 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4,
   },
   option: {
-    flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.sm, borderRadius: 12,
-    borderWidth: 2, borderColor: 'transparent',
+    padding: space.sm, borderRadius: 12, borderWidth: 2, borderColor: 'transparent',
   },
+  optionHeader: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  breakdown: {
+    marginTop: space.xs, paddingTop: space.xs, borderTopWidth: 1, borderTopColor: colors.border, gap: 4,
+  },
+  breakdownRow: { justifyContent: 'space-between' },
+  breakdownLabel: { fontSize: 13, color: colors.muted },
+  breakdownValue: { fontSize: 13, fontWeight: '600', color: colors.text },
   optionSelected: { borderColor: colors.primary, backgroundColor: colors.surface },
   optionTitle: { fontSize: 17, fontWeight: '600', color: colors.text },
   optionSub: { fontSize: 13, color: colors.muted },

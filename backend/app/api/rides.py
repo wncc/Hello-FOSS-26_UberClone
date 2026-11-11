@@ -14,10 +14,10 @@ from ..deps import current_user, get_ctx, get_session, require
 from ..errors import DomainError
 from ..models import DriverProfile, DriverStatus, Ride, RideStatus, Role, User
 from ..schemas import (
-    CancelIn, EstimateIn, EstimateOption, EstimateOut, RatingIn, RideCreateIn, RideOut, RouteOut, StartIn,
+    CancelIn, EstimateIn, EstimateOption, EstimateOut, FareBreakdownOut, RatingIn, RideCreateIn, RideOut, RouteOut, StartIn,
 )
 from ..services import rides as svc
-from ..services.pricing import fare_paise
+from ..services.pricing import fare_breakdown, fare_paise
 from ..services.rides import NO_ROUTE_MESSAGE
 
 router = APIRouter(prefix="/rides", tags=["rides"])
@@ -35,9 +35,24 @@ async def estimate(body: EstimateIn, ctx: AppContext = Depends(get_ctx), _: User
         route = ctx.routes.estimate(origin, dest, vehicle)
         if route is None:
             continue
-        options.append(EstimateOption(vehicle_type=vehicle, fare_paise=fare_paise(vehicle, route.distance_m, route.duration_s),
-                                      distance_m=route.distance_m, duration_s=route.duration_s,
-                                      drivers_nearby=nearby.get(vehicle.value, 0), route=route.geometry))
+        bd = fare_breakdown(vehicle, route.distance_m, route.duration_s)
+        options.append(EstimateOption(
+            vehicle_type=vehicle,
+            fare_paise=bd.total_paise,
+            distance_m=route.distance_m,
+            duration_s=route.duration_s,
+            drivers_nearby=nearby.get(vehicle.value, 0),
+            route=route.geometry,
+            breakdown=FareBreakdownOut(
+                base_paise=bd.base_paise,
+                distance_paise=bd.distance_paise,
+                duration_paise=bd.duration_paise,
+                booking_fee_paise=bd.booking_fee_paise,
+                minimum_topup_paise=bd.minimum_topup_paise,
+                rounding_paise=bd.rounding_paise,
+                total_paise=bd.total_paise,
+            ),
+        ))
     if not options:
         raise DomainError(422, NO_ROUTE_MESSAGE)
     return EstimateOut(options=options)
